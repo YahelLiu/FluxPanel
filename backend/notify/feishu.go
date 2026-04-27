@@ -17,187 +17,52 @@ import (
 // FeishuNotifier 飞书通知器
 type FeishuNotifier struct {
 	config models.FeishuConfig
+	client *http.Client
 }
 
 // NewFeishuNotifier 创建飞书通知器
 func NewFeishuNotifier(config models.FeishuConfig) *FeishuNotifier {
-	return &FeishuNotifier{config: config}
+	return &FeishuNotifier{
+		config: config,
+		client: &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
-// FeishuWebhookMessage 飞书 Webhook 消息
-type FeishuWebhookMessage struct {
-	MsgType string                 `json:"msg_type"`
-	Content map[string]interface{} `json:"content"`
-}
-
-// FeishuCardMessage 飞书卡片消息
-type FeishuCardMessage struct {
-	MsgType string `json:"msg_type"`
-	Card    struct {
-		Config   map[string]interface{}   `json:"config"`
-		Elements []map[string]interface{} `json:"elements"`
-	} `json:"card"`
-}
-
-// SendWebhook 发送 Webhook 消息
-func (f *FeishuNotifier) SendWebhook(title, content string, event models.Event) error {
+// Send 发送通知
+func (f *FeishuNotifier) Send(title, content string, event models.Event) error {
 	if f.config.WebhookURL == "" {
 		return fmt.Errorf("feishu webhook URL is empty")
 	}
+	return f.sendWebhook(title, content, event)
+}
 
-	// 构建卡片消息
-	card := map[string]interface{}{
-		"config": map[string]interface{}{
-			"wide_screen_mode": true,
-		},
-		"elements": []map[string]interface{}{
-			{
-				"tag": "div",
-				"text": map[string]interface{}{
-					"tag":     "lark_md",
-					"content": fmt.Sprintf("**%s**\n\n%s", title, content),
-				},
-			},
-			{
-				"tag": "div",
-				"fields": []map[string]interface{}{
-					{
-						"is_short": true,
-						"text": map[string]interface{}{
-							"tag":     "lark_md",
-							"content": fmt.Sprintf("**客户端:**\n%s", event.ClientID),
-						},
-					},
-					{
-						"is_short": true,
-						"text": map[string]interface{}{
-							"tag":     "lark_md",
-							"content": fmt.Sprintf("**事件类型:**\n%s", event.EventType),
-						},
-					},
-					{
-						"is_short": true,
-						"text": map[string]interface{}{
-							"tag":     "lark_md",
-							"content": fmt.Sprintf("**状态:**\n%s", event.Status),
-						},
-					},
-					{
-						"is_short": true,
-						"text": map[string]interface{}{
-							"tag":     "lark_md",
-							"content": fmt.Sprintf("**时间:**\n%s", event.CreatedAt.Format("2006-01-02 15:04:05")),
-						},
-					},
-				},
-			},
-			{
-				"tag": "note",
-				"elements": []map[string]interface{}{
-					{
-						"tag":     "plain_text",
-						"content": "来自 FluxPanel 监控系统",
-					},
-				},
-			},
-		},
-	}
-
-	// 根据状态设置颜色
-	if event.Status == "error" {
-		card["header"] = map[string]interface{}{
-			"title": map[string]interface{}{
-				"tag":     "plain_text",
-				"content": "🚨 " + title,
-			},
-			"template": "red",
-		}
-	} else if event.Status == "warning" {
-		card["header"] = map[string]interface{}{
-			"title": map[string]interface{}{
-				"tag":     "plain_text",
-				"content": "⚠️ " + title,
-			},
-			"template": "yellow",
-		}
-	} else {
-		card["header"] = map[string]interface{}{
-			"title": map[string]interface{}{
-				"tag":     "plain_text",
-				"content": "✅ " + title,
-			},
-			"template": "green",
-		}
-	}
-
+func (f *FeishuNotifier) sendWebhook(title, content string, event models.Event) error {
+	card := f.buildCard(title, content, event)
 	msg := map[string]interface{}{
 		"msg_type": "interactive",
 		"card":     card,
 	}
-
 	return f.sendRequest(msg)
 }
 
-// SendWebhookWithSign 发送带签名的 Webhook 消息
-func (f *FeishuNotifier) SendWebhookWithSign(title, content string, event models.Event, timestamp int64, secret string) error {
-	if f.config.WebhookURL == "" {
-		return fmt.Errorf("feishu webhook URL is empty")
-	}
-
-	// 生成签名
+// SendWithSign 发送带签名的消息
+func (f *FeishuNotifier) SendWithSign(title, content string, event models.Event, timestamp int64, secret string) error {
 	stringToSign := fmt.Sprintf("%d\n%s", timestamp, secret)
 	h := hmac.New(sha256.New, []byte(stringToSign))
 	h.Write([]byte(""))
 	signature := base64.StdEncoding.EncodeToString(h.Sum(nil))
 
-	// 构建消息
 	card := f.buildCard(title, content, event)
 	msg := map[string]interface{}{
-		"msg_type": "interactive",
-		"card":     card,
+		"msg_type":  "interactive",
+		"card":      card,
 		"timestamp": timestamp,
 		"sign":      signature,
 	}
-
 	return f.sendRequest(msg)
 }
 
 func (f *FeishuNotifier) buildCard(title, content string, event models.Event) map[string]interface{} {
-	card := map[string]interface{}{
-		"config": map[string]interface{}{
-			"wide_screen_mode": true,
-		},
-		"elements": []map[string]interface{}{
-			{
-				"tag": "div",
-				"text": map[string]interface{}{
-					"tag":     "lark_md",
-					"content": fmt.Sprintf("**%s**\n\n%s", title, content),
-				},
-			},
-			{
-				"tag": "div",
-				"fields": []map[string]interface{}{
-					{
-						"is_short": true,
-						"text": map[string]interface{}{
-							"tag":     "lark_md",
-							"content": fmt.Sprintf("**客户端:**\n%s", event.ClientID),
-						},
-					},
-					{
-						"is_short": true,
-						"text": map[string]interface{}{
-							"tag":     "lark_md",
-							"content": fmt.Sprintf("**事件类型:**\n%s", event.EventType),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	// 设置颜色
 	template := "green"
 	emoji := "✅"
 	if event.Status == "error" {
@@ -208,26 +73,55 @@ func (f *FeishuNotifier) buildCard(title, content string, event models.Event) ma
 		emoji = "⚠️"
 	}
 
-	card["header"] = map[string]interface{}{
-		"title": map[string]interface{}{
-			"tag":     "plain_text",
-			"content": emoji + " " + title,
+	return map[string]interface{}{
+		"config": map[string]interface{}{
+			"wide_screen_mode": true,
 		},
-		"template": template,
+		"header": map[string]interface{}{
+			"title": map[string]interface{}{
+				"tag":     "plain_text",
+				"content": emoji + " " + title,
+			},
+			"template": template,
+		},
+		"elements": []map[string]interface{}{
+			{
+				"tag": "div",
+				"text": map[string]interface{}{
+					"tag":     "lark_md",
+					"content": fmt.Sprintf("**%s**\n\n%s", title, content),
+				},
+			},
+			{
+				"tag": "div",
+				"fields": []map[string]interface{}{
+					{
+						"is_short": true,
+						"text": map[string]interface{}{
+							"tag":     "lark_md",
+							"content": fmt.Sprintf("**客户端:**\n%s", event.ClientID),
+						},
+					},
+					{
+						"is_short": true,
+						"text": map[string]interface{}{
+							"tag":     "lark_md",
+							"content": fmt.Sprintf("**事件类型:**\n%s", event.EventType),
+						},
+					},
+				},
+			},
+		},
 	}
-
-	return card
 }
 
-// sendRequest 发送 HTTP 请求
 func (f *FeishuNotifier) sendRequest(msg interface{}) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal message failed: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(f.config.WebhookURL, "application/json", bytes.NewReader(body))
+	resp, err := f.client.Post(f.config.WebhookURL, "application/json", jsonReader(body))
 	if err != nil {
 		return fmt.Errorf("send request failed: %w", err)
 	}
@@ -239,7 +133,6 @@ func (f *FeishuNotifier) sendRequest(msg interface{}) error {
 		return fmt.Errorf("feishu api error: status=%d, body=%s", resp.StatusCode, string(respBody))
 	}
 
-	// 检查响应
 	var result struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
@@ -253,15 +146,7 @@ func (f *FeishuNotifier) sendRequest(msg interface{}) error {
 	return nil
 }
 
-// --- 飞书应用消息 (需要 App ID 和 App Secret) ---
-
-// FeishuAccessToken 飞书访问令牌响应
-type FeishuAccessToken struct {
-	AccessToken string `json:"app_access_token"`
-	ExpireIn    int    `json:"expire"`
-}
-
-// GetAccessToken 获取飞书应用访问令牌
+// GetAccessToken 获取访问令牌
 func (f *FeishuNotifier) GetAccessToken() (string, error) {
 	if f.config.AppID == "" || f.config.AppSecret == "" {
 		return "", fmt.Errorf("feishu app_id or app_secret is empty")
@@ -274,8 +159,7 @@ func (f *FeishuNotifier) GetAccessToken() (string, error) {
 	}
 
 	bodyBytes, _ := json.Marshal(body)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(bodyBytes))
+	resp, err := f.client.Post(url, "application/json", jsonReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("get access token failed: %w", err)
 	}
@@ -301,14 +185,13 @@ func (f *FeishuNotifier) GetAccessToken() (string, error) {
 	return result.Data.AccessToken, nil
 }
 
-// SendAppMessage 发送应用消息（单聊）
+// SendAppMessage 发送应用消息
 func (f *FeishuNotifier) SendAppMessage(userID, title, content string, event models.Event) error {
 	accessToken, err := f.GetAccessToken()
 	if err != nil {
 		return err
 	}
 
-	// 构建消息
 	card := f.buildCard(title, content, event)
 	msg := map[string]interface{}{
 		"receive_id_type": "user_id",
@@ -319,12 +202,11 @@ func (f *FeishuNotifier) SendAppMessage(userID, title, content string, event mod
 	url := fmt.Sprintf("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=user_id&receive_id=%s", userID)
 	bodyBytes, _ := json.Marshal(msg)
 
-	req, _ := http.NewRequest("POST", url, bytes.NewReader(bodyBytes))
+	req, _ := http.NewRequest("POST", url, jsonReader(bodyBytes))
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := f.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("send app message failed: %w", err)
 	}
@@ -347,7 +229,7 @@ func (f *FeishuNotifier) SendAppMessage(userID, title, content string, event mod
 	return nil
 }
 
-// SendToAllUsers 发送消息给所有配置的用户
+// SendToAllUsers 发送消息给所有用户
 func (f *FeishuNotifier) SendToAllUsers(title, content string, event models.Event) error {
 	if len(f.config.UserIDs) == 0 {
 		return fmt.Errorf("no user ids configured")
@@ -361,6 +243,10 @@ func (f *FeishuNotifier) SendToAllUsers(title, content string, event models.Even
 	}
 
 	return lastErr
+}
+
+func jsonReader(data []byte) *bytes.Reader {
+	return bytes.NewReader(data)
 }
 
 func mustJSON(v interface{}) []byte {

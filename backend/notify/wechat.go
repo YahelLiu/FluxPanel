@@ -14,92 +14,54 @@ import (
 // WechatWorkNotifier 企业微信通知器
 type WechatWorkNotifier struct {
 	config models.WechatWorkConfig
+	client *http.Client
 }
 
 // NewWechatWorkNotifier 创建企业微信通知器
 func NewWechatWorkNotifier(config models.WechatWorkConfig) *WechatWorkNotifier {
-	return &WechatWorkNotifier{config: config}
+	return &WechatWorkNotifier{
+		config: config,
+		client: &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
-// SendWebhook 发送 Webhook 消息
-func (w *WechatWorkNotifier) SendWebhook(title, content string, event models.Event) error {
+// Send 发送通知
+func (w *WechatWorkNotifier) Send(title, content string, event models.Event) error {
 	if w.config.WebhookURL == "" {
 		return fmt.Errorf("wechat work webhook URL is empty")
 	}
+	return w.sendWebhook(title, content, event)
+}
 
-	// 构建卡片消息
+func (w *WechatWorkNotifier) sendWebhook(title, content string, event models.Event) error {
 	msg := map[string]interface{}{
 		"msgtype": "markdown",
 		"markdown": map[string]interface{}{
 			"content": w.formatMarkdown(title, content, event),
 		},
 	}
-
 	return w.sendRequest(msg)
 }
 
-// SendWebhookCard 发送卡片消息
-func (w *WechatWorkNotifier) SendWebhookCard(title, content string, event models.Event) error {
-	if w.config.WebhookURL == "" {
-		return fmt.Errorf("wechat work webhook URL is empty")
-	}
-
-	// 构建模板卡片消息
-	cardContent := map[string]interface{}{
-		"card_type": "text_notice",
-		"main_title": map[string]interface{}{
-			"title": title,
-		},
-		"sub_title_text": fmt.Sprintf("状态: %s | 时间: %s", event.Status, event.CreatedAt.Format("2006-01-02 15:04:05")),
-		"horizontal_content_list": []map[string]interface{}{
-			{
-				"key":   "客户端",
-				"value": event.ClientID,
-			},
-			{
-				"key":   "事件类型",
-				"value": event.EventType,
-			},
-		},
-	}
-
-	if content != "" {
-		cardContent["card_image"] = map[string]interface{}{
-			"url": "https://wework.qpic.cn/wwpic/2528_1176235270_1624065719_0",
-		}
-		cardContent["card_action"] = map[string]interface{}{
-			"type": 1,
-			"url":  "https://github.com/YahelLiu/FluxPanel",
-		}
-	}
-
-	// 根据状态设置强调色
-	if event.Status == "error" {
-		cardContent["emphasis_content"] = map[string]interface{}{
-			"title": "异常告警",
-			"desc":  content,
-		}
-	} else if event.Status == "warning" {
-		cardContent["emphasis_content"] = map[string]interface{}{
-			"title": "警告",
-			"desc":  content,
-		}
-	}
-
+// SendCard 发送卡片消息
+func (w *WechatWorkNotifier) SendCard(title, content string, event models.Event) error {
+	card := w.buildCard(title, content, event)
 	msg := map[string]interface{}{
-		"msgtype": "template_card",
-		"template_card": cardContent,
+		"msgtype":       "template_card",
+		"template_card": card,
 	}
-
 	return w.sendRequest(msg)
 }
 
 func (w *WechatWorkNotifier) formatMarkdown(title, content string, event models.Event) string {
 	emoji := "✅"
+	color := "info"
 	if event.Status == "error" {
 		emoji = "🚨"
+		color = "warning"
 	} else if event.Status == "warning" {
 		emoji = "⚠️"
+		color = "comment"
 	}
 
 	return fmt.Sprintf(`%s **%s**
@@ -112,37 +74,46 @@ func (w *WechatWorkNotifier) formatMarkdown(title, content string, event models.
 %s
 ---
 来自 FluxPanel 监控系统`,
-		emoji,
-		title,
-		w.getStatusColor(event.Status),
-		event.Status,
-		event.ClientID,
-		event.EventType,
-		event.CreatedAt.Format("2006-01-02 15:04:05"),
-		content,
+		emoji, title, color, event.Status, event.ClientID, event.EventType,
+		event.CreatedAt.Format("2006-01-02 15:04:05"), content,
 	)
 }
 
-func (w *WechatWorkNotifier) getStatusColor(status string) string {
-	switch status {
-	case "error":
-		return "warning"
-	case "warning":
-		return "comment"
-	default:
-		return "info"
+func (w *WechatWorkNotifier) buildCard(title, content string, event models.Event) map[string]interface{} {
+	card := map[string]interface{}{
+		"card_type": "text_notice",
+		"main_title": map[string]interface{}{
+			"title": title,
+		},
+		"sub_title_text": fmt.Sprintf("状态: %s | 时间: %s", event.Status, event.CreatedAt.Format("2006-01-02 15:04:05")),
+		"horizontal_content_list": []map[string]interface{}{
+			{"key": "客户端", "value": event.ClientID},
+			{"key": "事件类型", "value": event.EventType},
+		},
 	}
+
+	if event.Status == "error" {
+		card["emphasis_content"] = map[string]interface{}{
+			"title": "异常告警",
+			"desc":  content,
+		}
+	} else if event.Status == "warning" {
+		card["emphasis_content"] = map[string]interface{}{
+			"title": "警告",
+			"desc":  content,
+		}
+	}
+
+	return card
 }
 
-// sendRequest 发送 HTTP 请求
 func (w *WechatWorkNotifier) sendRequest(msg interface{}) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal message failed: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(w.config.WebhookURL, "application/json", bytes.NewReader(body))
+	resp, err := w.client.Post(w.config.WebhookURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("send request failed: %w", err)
 	}
@@ -154,7 +125,6 @@ func (w *WechatWorkNotifier) sendRequest(msg interface{}) error {
 		return fmt.Errorf("wechat work api error: status=%d, body=%s", resp.StatusCode, string(respBody))
 	}
 
-	// 检查响应
 	var result struct {
 		ErrCode int    `json:"errcode"`
 		ErrMsg  string `json:"errmsg"`
@@ -168,9 +138,7 @@ func (w *WechatWorkNotifier) sendRequest(msg interface{}) error {
 	return nil
 }
 
-// --- 企业微信应用消息 ---
-
-// GetAccessToken 获取企业微信访问令牌
+// GetAccessToken 获取访问令牌
 func (w *WechatWorkNotifier) GetAccessToken() (string, error) {
 	if w.config.CorpID == "" || w.config.Secret == "" {
 		return "", fmt.Errorf("wechat work corp_id or secret is empty")
@@ -178,8 +146,7 @@ func (w *WechatWorkNotifier) GetAccessToken() (string, error) {
 
 	url := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", w.config.CorpID, w.config.Secret)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := w.client.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("get access token failed: %w", err)
 	}
@@ -210,7 +177,6 @@ func (w *WechatWorkNotifier) SendAppMessage(userID, title, content string, event
 		return err
 	}
 
-	// 构建消息
 	msg := map[string]interface{}{
 		"touser":  userID,
 		"msgtype": "markdown",
@@ -223,8 +189,7 @@ func (w *WechatWorkNotifier) SendAppMessage(userID, title, content string, event
 	url := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", accessToken)
 	bodyBytes, _ := json.Marshal(msg)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(bodyBytes))
+	resp, err := w.client.Post(url, "application/json", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("send app message failed: %w", err)
 	}
@@ -247,7 +212,7 @@ func (w *WechatWorkNotifier) SendAppMessage(userID, title, content string, event
 	return nil
 }
 
-// SendToAllUsers 发送消息给所有配置的用户
+// SendToAllUsers 发送消息给所有用户
 func (w *WechatWorkNotifier) SendToAllUsers(title, content string, event models.Event) error {
 	if len(w.config.UserIDs) == 0 {
 		return fmt.Errorf("no user ids configured")

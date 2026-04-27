@@ -82,6 +82,8 @@ func UpdateLLMConfig(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建配置失败"})
 			return
 		}
+		// 清除缓存
+		services.GetCacheService().ClearLLMConfig()
 		c.JSON(http.StatusOK, req)
 	} else {
 		// 更新配置
@@ -101,6 +103,8 @@ func UpdateLLMConfig(c *gin.Context) {
 		updates["enabled"] = req.Enabled
 
 		database.DB.Model(&config).Updates(updates)
+		// 清除缓存
+		services.GetCacheService().ClearLLMConfig()
 		c.JSON(http.StatusOK, config)
 	}
 }

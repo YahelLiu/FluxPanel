@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"client-monitor/database"
 	"client-monitor/models"
@@ -162,6 +163,7 @@ func HandleWeComChat(c *gin.Context) {
 		UserID      string `json:"user_id" binding:"required"`
 		Message     string `json:"message" binding:"required"`
 		SendToWeCom bool   `json:"send_to_wecom"` // 是否发送到企业微信
+		Stream      bool   `json:"stream"`        // 是否使用流式响应
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -180,7 +182,13 @@ func HandleWeComChat(c *gin.Context) {
 		database.DB.Create(&user)
 	}
 
-	// 处理消息
+	// 如果请求流式响应
+	if req.Stream {
+		handleWeComChatStream(c, user.ID, req.Message, req.UserID, req.SendToWeCom)
+		return
+	}
+
+	// 非流式处理
 	agent := services.GetAgentService()
 	response, err := agent.ProcessMessage(user.ID, req.Message)
 	if err != nil {
@@ -199,6 +207,72 @@ func HandleWeComChat(c *gin.Context) {
 		"success":  true,
 		"response": response,
 	})
+}
+
+// handleWeComChatStream 流式聊天处理
+func handleWeComChatStream(c *gin.Context, userID uint, message, wecomUserID string, sendToWeCom bool) {
+	agent := services.GetAgentService()
+
+	// 设置 SSE 响应头
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Transfer-Encoding", "chunked")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "不支持流式响应"})
+		return
+	}
+
+	// 先分析意图（这部分很快，不需要流式）
+	result, err := agent.AnalyzeIntent(message)
+	if err != nil {
+		c.SSEvent("error", gin.H{"error": err.Error()})
+		flusher.Flush()
+		return
+	}
+
+	// 非聊天意图，直接处理（记忆、提醒等）
+	if result.Intent != models.IntentChat {
+		response, err := agent.ProcessMessage(userID, message)
+		if err != nil {
+			c.SSEvent("error", gin.H{"error": err.Error()})
+			flusher.Flush()
+			return
+		}
+		// 直接发送完整响应，一次性
+		c.SSEvent("done", gin.H{"content": response})
+		flusher.Flush()
+		return
+	}
+
+	// 聊天意图，使用流式响应
+	var fullResponse strings.Builder
+
+	err = agent.StreamChat(userID, message, func(chunk string) error {
+		fullResponse.WriteString(chunk)
+		c.SSEvent("message", gin.H{"content": chunk})
+		flusher.Flush()
+		return nil
+	})
+
+	if err != nil {
+		c.SSEvent("error", gin.H{"error": err.Error()})
+		flusher.Flush()
+		return
+	}
+
+	// 发送结束标记（不包含内容，只是标记结束）
+	c.SSEvent("done", gin.H{})
+	flusher.Flush()
+
+	// 如果需要发送到企业微信
+	if sendToWeCom && fullResponse.Len() > 0 {
+		if err := SendWeComMessage(wecomUserID, fullResponse.String()); err != nil {
+			log.Printf("发送到企业微信失败: %v", err)
+		}
+	}
 }
 
 // GetWeComConfig GET /api/wecom/config - 获取企业微信配置
@@ -262,6 +336,37 @@ func UpdateWeComConfig(c *gin.Context) {
 		database.DB.Model(&config).Updates(updates)
 		c.JSON(http.StatusOK, config)
 	}
+}
+
+// GetPendingReminders GET /api/wecom/reminders/pending - 获取待发送的提醒（用于前端轮询）
+func GetPendingReminders(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id required"})
+		return
+	}
+
+	// 获取用户
+	var user models.AIUser
+	if err := database.DB.Where("wecom_user_id = ?", userID).First(&user).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"reminders": []interface{}{}})
+		return
+	}
+
+	// 查找到期但未发送的提醒
+	var reminders []models.Reminder
+	database.DB.Where("user_id = ? AND remind_at <= ? AND sent = ?", user.ID, time.Now(), false).
+		Order("remind_at asc").
+		Find(&reminders)
+
+	c.JSON(http.StatusOK, gin.H{"reminders": reminders})
+}
+
+// MarkReminderSent POST /api/wecom/reminders/:id/sent - 标记提醒已发送（前端确认）
+func MarkReminderSent(c *gin.Context) {
+	id := c.Param("id")
+	database.DB.Model(&models.Reminder{}).Where("id = ?", id).Update("sent", true)
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // maskString 隐藏字符串中间部分

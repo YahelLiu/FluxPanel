@@ -4,6 +4,7 @@ import (
 	"client-monitor/config"
 	"client-monitor/database"
 	"client-monitor/handlers"
+	"client-monitor/models"
 	"client-monitor/notify"
 	"log"
 
@@ -36,6 +37,12 @@ func main() {
 	// Initialize reminder service
 	notify.GetReminderService().Start()
 	log.Println("Reminder service initialized")
+
+	// 设置提醒发送回调，通过 WebSocket 推送
+	notify.SetSendReminderCallback(func(reminder *models.Reminder) {
+		handlers.SendReminderViaWebSocket(reminder)
+	})
+	log.Println("Reminder WebSocket callback registered")
 
 	// Setup Gin router
 	r := gin.Default()
@@ -123,6 +130,8 @@ func main() {
 			wecom.PUT("/config", handlers.UpdateWeComConfig)
 			wecom.POST("/test", handlers.HandleWeComTest)
 			wecom.POST("/chat", handlers.HandleWeComChat)
+			wecom.GET("/reminders/pending", handlers.GetPendingReminders)
+			wecom.POST("/reminders/:id/sent", handlers.MarkReminderSent)
 		}
 
 		// AI Assistant routes

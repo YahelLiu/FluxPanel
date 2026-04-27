@@ -138,7 +138,7 @@ func UpdateChannel(c *gin.Context) {
 	}
 
 	// 清除缓存
-	notify.GetService().ClearCache(channel.ID)
+	notify.GetService().ClearCache()
 
 	c.JSON(http.StatusOK, channel)
 }
@@ -163,7 +163,7 @@ func DeleteChannel(c *gin.Context) {
 	}
 
 	// 清除缓存
-	notify.GetService().ClearCache(uint(id))
+	notify.GetService().ClearCache()
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
