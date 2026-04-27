@@ -1,8 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { Activity, Wifi, WifiOff, Cpu, HardDrive, Monitor, MapPin, Clock, Trash2, GripVertical, Bell } from 'lucide-react'
+import { Activity, Wifi, WifiOff, Cpu, HardDrive, Monitor, MapPin, Clock, Trash2, GripVertical, Bell, CloudSun, Send } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { NotificationSettings } from '@/components/NotificationSettings'
+
+interface ClientOrder {
+  client_id: string
+  sort_order: number
+  weather_enabled: boolean
+  channel_id: number
+}
+
+interface NotificationChannel {
+  id: number
+  name: string
+  type: string
+  enabled: boolean
+}
 
 interface Disk {
   name: string
@@ -62,7 +76,8 @@ interface WSEvent {
 
 export function Dashboard() {
   const [clients, setClients] = useState<Map<string, ClientData>>(new Map())
-  const [clientOrders, setClientOrders] = useState<Map<string, number>>(new Map())
+  const [clientOrders, setClientOrders] = useState<Map<string, ClientOrder>>(new Map())
+  const [channels, setChannels] = useState<NotificationChannel[]>([])
   const [loading, setLoading] = useState(true)
   const [draggedClient, setDraggedClient] = useState<string | null>(null)
   const [showNotificationSettings, setShowNotificationSettings] = useState(false)
@@ -79,13 +94,24 @@ export function Dashboard() {
     try {
       const res = await fetch('/api/clients/orders')
       const orders = await res.json()
-      const orderMap = new Map<string, number>()
-      for (const [clientId, order] of Object.entries(orders)) {
-        orderMap.set(clientId, order as number)
+      const orderMap = new Map<string, ClientOrder>()
+      for (const order of orders) {
+        orderMap.set(order.client_id, order)
       }
       setClientOrders(orderMap)
     } catch (error) {
       console.error('Failed to fetch client orders:', error)
+    }
+  }
+
+  // Fetch notification channels
+  const fetchChannels = async () => {
+    try {
+      const res = await fetch('/api/notifications/channels')
+      const data = await res.json()
+      setChannels(data.filter((c: NotificationChannel) => c.enabled))
+    } catch (error) {
+      console.error('Failed to fetch channels:', error)
     }
   }
 
@@ -95,7 +121,8 @@ export function Dashboard() {
       try {
         const [clientsRes] = await Promise.all([
           fetch('/api/clients/latest'),
-          fetchClientOrders()
+          fetchClientOrders(),
+          fetchChannels()
         ])
         const json = await clientsRes.json()
         const clientMap = new Map<string, ClientData>()
@@ -208,9 +235,14 @@ export function Dashboard() {
       })
 
       // Update local state
-      const newOrderMap = new Map<string, number>()
-      orders.forEach(o => newOrderMap.set(o.client_id, o.sort_order))
-      setClientOrders(newOrderMap)
+      setClientOrders(prev => {
+        const newMap = new Map(prev)
+        orders.forEach(o => {
+          const existing = newMap.get(o.client_id) || { client_id: o.client_id, sort_order: 0, weather_enabled: false, channel_id: 0 }
+          newMap.set(o.client_id, { ...existing, sort_order: o.sort_order })
+        })
+        return newMap
+      })
     } catch (error) {
       console.error('Failed to update order:', error)
     }
@@ -222,10 +254,48 @@ export function Dashboard() {
   const getSortedClients = () => {
     const clientList = Array.from(clients.values())
     return clientList.sort((a, b) => {
-      const orderA = clientOrders.get(a.client_id) ?? 999999
-      const orderB = clientOrders.get(b.client_id) ?? 999999
+      const orderA = clientOrders.get(a.client_id)?.sort_order ?? 999999
+      const orderB = clientOrders.get(b.client_id)?.sort_order ?? 999999
       return orderA - orderB
     })
+  }
+
+  // Update client weather settings
+  const updateClientWeather = async (clientId: string, weatherEnabled: boolean, channelId: number) => {
+    try {
+      await fetch(`/api/clients/${encodeURIComponent(clientId)}/weather`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weather_enabled: weatherEnabled,
+          channel_id: channelId
+        })
+      })
+      // Update local state
+      setClientOrders(prev => {
+        const newMap = new Map(prev)
+        const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0 }
+        newMap.set(clientId, { ...existing, weather_enabled: weatherEnabled, channel_id: channelId })
+        return newMap
+      })
+    } catch (error) {
+      console.error('Failed to update weather settings:', error)
+    }
+  }
+
+  // Send weather notification to a specific client
+  const sendWeatherToClient = async (clientId: string) => {
+    try {
+      const res = await fetch('/api/weather/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId })
+      })
+      const data = await res.json()
+      alert(data.message || '发送成功')
+    } catch (error) {
+      alert('发送失败')
+    }
   }
 
   // Format time ago
@@ -233,6 +303,7 @@ export function Dashboard() {
     const date = new Date(dateStr)
     const seconds = Math.floor((now - date.getTime()) / 1000)
 
+    if (seconds < 5) return '刚刚'
     if (seconds < 60) return `${seconds}秒前`
     if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟前`
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`
@@ -370,6 +441,55 @@ export function Dashboard() {
                       </span>
                     </div>
                   )}
+
+                  {/* Weather Settings */}
+                  <div className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-sm">
+                    <CloudSun className="h-4 w-4 text-blue-500" />
+                    <label className="flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={clientOrders.get(client.client_id)?.weather_enabled || false}
+                        onChange={(e) => {
+                          const currentOrder = clientOrders.get(client.client_id)
+                          updateClientWeather(
+                            client.client_id,
+                            e.target.checked,
+                            currentOrder?.channel_id || 0
+                          )
+                        }}
+                        className="rounded"
+                      />
+                      <span className="text-xs">天气推送</span>
+                    </label>
+                    {clientOrders.get(client.client_id)?.weather_enabled && channels.length > 0 && (
+                      <select
+                        value={clientOrders.get(client.client_id)?.channel_id || 0}
+                        onChange={(e) => {
+                          const currentOrder = clientOrders.get(client.client_id)
+                          updateClientWeather(
+                            client.client_id,
+                            currentOrder?.weather_enabled || false,
+                            Number(e.target.value)
+                          )
+                        }}
+                        className="flex-1 px-2 py-1 text-xs border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600"
+                      >
+                        <option value={0}>默认渠道</option>
+                        {channels.map(ch => (
+                          <option key={ch.id} value={ch.id}>{ch.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    {clientOrders.get(client.client_id)?.weather_enabled && client.data.location && (
+                      <button
+                        onClick={() => sendWeatherToClient(client.client_id)}
+                        className="p-1 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
+                        title="立即发送天气通知"
+                      >
+                        <Send className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
 
                   {/* CPU */}
                   {client.data.cpu && (

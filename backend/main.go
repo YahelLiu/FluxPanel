@@ -29,6 +29,10 @@ func main() {
 	notify.GetAlertService()
 	log.Println("Notification service initialized")
 
+	// Initialize weather service
+	notify.GetWeatherService().Start()
+	log.Println("Weather service initialized")
+
 	// Setup Gin router
 	r := gin.Default()
 
@@ -53,6 +57,7 @@ func main() {
 		api.GET("/clients/orders", handlers.GetClientOrders)
 		api.PUT("/clients/order", handlers.UpdateClientOrder)
 		api.PUT("/clients/orders", handlers.UpdateAllClientOrders)
+		api.PUT("/clients/:client_id/weather", handlers.UpdateClientWeather)
 
 		// Notification routes
 		notifications := api.Group("/notifications")
@@ -91,6 +96,18 @@ func main() {
 			alerts.GET("/active", handlers.GetActiveAlerts)
 			alerts.PUT("/records/:id/resolve", handlers.ResolveAlert)
 			alerts.DELETE("/records/:id", handlers.DeleteAlertRecord)
+		}
+
+		// Weather routes
+		weather := api.Group("/weather")
+		{
+			weather.GET("/config", handlers.GetWeatherConfig)
+			weather.PUT("/config", handlers.UpdateWeatherConfig)
+			weather.POST("/test", handlers.TestWeatherConfig)
+			weather.GET("/schedules", handlers.GetWeatherSchedules)
+			weather.PUT("/schedules", handlers.UpdateWeatherSchedules)
+			weather.GET("/records", handlers.GetWeatherRecords)
+			weather.POST("/send", handlers.SendWeatherNow)
 		}
 	}
 

@@ -32,6 +32,9 @@ func Connect(cfg *config.Config) error {
 		&models.NotificationLog{},
 		&models.AlertThreshold{},
 		&models.AlertRecord{},
+		&models.WeatherConfig{},
+		&models.WeatherSchedule{},
+		&models.WeatherRecord{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

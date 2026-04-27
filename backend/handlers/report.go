@@ -264,12 +264,18 @@ func GetClientOrders(c *gin.Context) {
 	var orders []models.ClientOrder
 	database.DB.Order("sort_order ASC").Find(&orders)
 
-	ordersMap := make(map[string]int)
+	// 返回完整的客户端设置信息
+	result := make([]gin.H, 0)
 	for _, o := range orders {
-		ordersMap[o.ClientID] = o.SortOrder
+		result = append(result, gin.H{
+			"client_id":       o.ClientID,
+			"sort_order":      o.SortOrder,
+			"weather_enabled": o.WeatherEnabled,
+			"channel_id":      o.ChannelID,
+		})
 	}
 
-	c.JSON(http.StatusOK, ordersMap)
+	c.JSON(http.StatusOK, result)
 }
 
 // UpdateClientOrder handles PUT /api/clients/order - update client sort order
@@ -311,6 +317,47 @@ func UpdateAllClientOrders(c *gin.Context) {
 	// Update each order
 	for _, o := range req.Orders {
 		database.DB.Save(&o)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// UpdateClientWeather handles PUT /api/clients/:client_id/weather - update client weather settings
+func UpdateClientWeather(c *gin.Context) {
+	clientID := c.Param("client_id")
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id is required"})
+		return
+	}
+
+	var req struct {
+		WeatherEnabled bool `json:"weather_enabled"`
+		ChannelID      uint `json:"channel_id"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 查找或创建客户端设置
+	var order models.ClientOrder
+	result := database.DB.Where("client_id = ?", clientID).First(&order)
+	if result.Error != nil {
+		// 创建新记录
+		order = models.ClientOrder{
+			ClientID:       clientID,
+			WeatherEnabled: req.WeatherEnabled,
+			ChannelID:      req.ChannelID,
+		}
+	} else {
+		order.WeatherEnabled = req.WeatherEnabled
+		order.ChannelID = req.ChannelID
+	}
+
+	if err := database.DB.Save(&order).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update weather settings"})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
