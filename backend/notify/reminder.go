@@ -1,0 +1,141 @@
+package notify
+
+import (
+	"log"
+	"sync"
+	"time"
+
+	"client-monitor/database"
+	"client-monitor/models"
+)
+
+// ReminderService 提醒服务
+type ReminderService struct {
+	stopChan chan struct{}
+	mux      sync.RWMutex
+}
+
+var (
+	reminderService     *ReminderService
+	reminderServiceOnce sync.Once
+)
+
+// GetReminderService 获取提醒服务单例
+func GetReminderService() *ReminderService {
+	reminderServiceOnce.Do(func() {
+		reminderService = &ReminderService{
+			stopChan: make(chan struct{}),
+		}
+	})
+	return reminderService
+}
+
+// Start 启动提醒服务
+func (r *ReminderService) Start() {
+	go r.scheduler()
+	log.Println("Reminder service started")
+}
+
+// Stop 停止提醒服务
+func (r *ReminderService) Stop() {
+	close(r.stopChan)
+	log.Println("Reminder service stopped")
+}
+
+// scheduler 调度器
+func (r *ReminderService) scheduler() {
+	// 初始检查，延迟 30 秒后开始
+	time.Sleep(30 * time.Second)
+
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.stopChan:
+			return
+		case <-ticker.C:
+			r.checkAndSend()
+		}
+	}
+}
+
+// checkAndSend 检查并发送提醒
+func (r *ReminderService) checkAndSend() {
+	now := time.Now()
+
+	// 查找到期的提醒
+	var reminders []models.Reminder
+	if err := database.DB.Where("remind_at <= ? AND sent = ?", now, false).Find(&reminders).Error; err != nil {
+		log.Printf("查询提醒失败: %v", err)
+		return
+	}
+
+	if len(reminders) == 0 {
+		return
+	}
+
+	log.Printf("发现 %d 条待发送提醒", len(reminders))
+
+	for _, reminder := range reminders {
+		if err := r.sendReminder(&reminder); err != nil {
+			log.Printf("发送提醒失败 (ID=%d): %v", reminder.ID, err)
+		} else {
+			// 标记为已发送
+			database.DB.Model(&reminder).Update("sent", true)
+			log.Printf("提醒已发送 (ID=%d): %s", reminder.ID, reminder.Content)
+		}
+	}
+}
+
+// sendReminder 发送提醒
+func (r *ReminderService) sendReminder(reminder *models.Reminder) error {
+	// 获取用户信息
+	var user models.AIUser
+	if err := database.DB.First(&user, reminder.UserID).Error; err != nil {
+		return err
+	}
+
+	// 获取企业微信配置
+	var config models.WeComConfig
+	if err := database.DB.Where("enabled = ?", true).First(&config).Error; err != nil {
+		return err
+	}
+
+	// 构建消息内容
+	content := "⏰ 提醒：" + reminder.Content
+
+	// 使用企业微信发送消息
+	wechatConfig := models.WechatWorkConfig{
+		CorpID:  config.CorpID,
+		AgentID: config.AgentID,
+		Secret:  config.Secret,
+	}
+
+	notifier := NewWechatWorkNotifier(wechatConfig)
+
+	// 创建事件用于发送
+	event := models.Event{
+		ClientID:  "assistant",
+		EventType: "reminder",
+		Status:    "info",
+	}
+
+	return notifier.SendAppMessage(user.WecomUserID, "提醒", content, event)
+}
+
+// SendReminderNow 立即发送提醒（用于测试）
+func (r *ReminderService) SendReminderNow(reminderID uint) error {
+	var reminder models.Reminder
+	if err := database.DB.First(&reminder, reminderID).Error; err != nil {
+		return err
+	}
+
+	if err := r.sendReminder(&reminder); err != nil {
+		return err
+	}
+
+	// 标记为已发送
+	database.DB.Model(&reminder).Update("sent", true)
+	return nil
+}

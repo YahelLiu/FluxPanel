@@ -33,6 +33,10 @@ func main() {
 	notify.GetWeatherService().Start()
 	log.Println("Weather service initialized")
 
+	// Initialize reminder service
+	notify.GetReminderService().Start()
+	log.Println("Reminder service initialized")
+
 	// Setup Gin router
 	r := gin.Default()
 
@@ -108,6 +112,33 @@ func main() {
 			weather.PUT("/schedules", handlers.UpdateWeatherSchedules)
 			weather.GET("/records", handlers.GetWeatherRecords)
 			weather.POST("/send", handlers.SendWeatherNow)
+		}
+
+		// WeCom routes
+		wecom := api.Group("/wecom")
+		{
+			wecom.GET("/callback", handlers.HandleWeComVerify)
+			wecom.POST("/callback", handlers.HandleWeComCallback)
+			wecom.GET("/config", handlers.GetWeComConfig)
+			wecom.PUT("/config", handlers.UpdateWeComConfig)
+			wecom.POST("/test", handlers.HandleWeComTest)
+			wecom.POST("/chat", handlers.HandleWeComChat)
+		}
+
+		// AI Assistant routes
+		assistant := api.Group("/assistant")
+		{
+			assistant.GET("/llm", handlers.GetLLMConfig)
+			assistant.PUT("/llm", handlers.UpdateLLMConfig)
+			assistant.GET("/users", handlers.GetAIUsers)
+			assistant.GET("/conversations", handlers.GetConversations)
+			assistant.GET("/todos", handlers.GetTodos)
+			assistant.POST("/todos", handlers.CreateTodo)
+			assistant.PUT("/todos/:id", handlers.UpdateTodo)
+			assistant.DELETE("/todos/:id", handlers.DeleteTodo)
+			assistant.GET("/memories", handlers.GetMemories)
+			assistant.DELETE("/memories/:id", handlers.DeleteMemory)
+			assistant.GET("/reminders", handlers.GetReminders)
 		}
 	}
 

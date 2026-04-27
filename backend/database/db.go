@@ -35,6 +35,14 @@ func Connect(cfg *config.Config) error {
 		&models.WeatherConfig{},
 		&models.WeatherSchedule{},
 		&models.WeatherRecord{},
+		// AI Assistant models
+		&models.AIUser{},
+		&models.Conversation{},
+		&models.Memory{},
+		&models.Todo{},
+		&models.Reminder{},
+		&models.LLMConfig{},
+		&models.WeComConfig{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

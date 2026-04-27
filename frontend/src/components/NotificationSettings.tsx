@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Bell, Plus, Trash2, Edit2, Check, X, Send, AlertTriangle, CheckCircle, AlertCircle, Gauge, CloudSun } from 'lucide-react'
+import { Bell, Plus, Trash2, Edit2, Check, X, Send, AlertTriangle, CheckCircle, AlertCircle, Gauge, CloudSun, Bot } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { WeatherSettings } from './WeatherSettings'
+import { AssistantSettings } from './AssistantSettings'
 
 interface NotificationChannel {
   id: number
@@ -62,7 +63,7 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
   const [channels, setChannels] = useState<NotificationChannel[]>([])
   const [thresholds, setThresholds] = useState<AlertThreshold[]>([])
   const [alertRecords, setAlertRecords] = useState<AlertRecord[]>([])
-  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather'>('alerts')
+  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather' | 'assistant'>('alerts')
   const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
   const [editingThreshold, setEditingThreshold] = useState<AlertThreshold | null>(null)
   const [showChannelForm, setShowChannelForm] = useState(false)
@@ -189,6 +190,7 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
             { key: 'alerts', label: '告警规则', icon: <AlertTriangle className="h-4 w-4" />, count: thresholds.length },
             { key: 'channels', label: '通知渠道', icon: <Bell className="h-4 w-4" />, count: channels.length },
             { key: 'weather', label: '天气推送', icon: <CloudSun className="h-4 w-4" /> },
+            { key: 'assistant', label: 'AI 助手', icon: <Bot className="h-4 w-4" /> },
             { key: 'logs', label: '告警记录', icon: <CheckCircle className="h-4 w-4" /> },
           ].map(tab => (
             <button
@@ -425,6 +427,11 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
           {/* Weather Tab */}
           {activeTab === 'weather' && (
             <WeatherSettings channels={channels} />
+          )}
+
+          {/* Assistant Tab */}
+          {activeTab === 'assistant' && (
+            <AssistantSettings />
           )}
         </div>
 
