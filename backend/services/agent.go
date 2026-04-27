@@ -39,20 +39,20 @@ func (a *AgentService) AnalyzeIntent(userMessage string) (*models.AgentResult, e
 返回格式：
 {
   "intent": "chat|memory|todo|reminder",
-  "action": "create|list|complete|none",
+  "action": "create|list|complete|cancel|none",
   "content": "提取的内容",
   "time": "时间描述（如有）"
 }
 
 判断规则：
 - intent=memory: 用户想让你记住某事（"记住..."、"以后..."、"我的xxx是..."）
-- intent=todo: 用户想管理待办事项（"加个todo"、"记一下..."、"我有哪些todo"、"完成..."）
-- intent=reminder: 用户想设置提醒（"X分钟后提醒我"、"明天X点提醒我"、"提醒我..."）
+- intent=todo: 用户想管理待办事项（"加个todo"、"记一下..."、"我有哪些todo"、"完成..."、"查看待办"）
+- intent=reminder: 用户想管理提醒（"X分钟后提醒我"、"明天X点提醒我"、"我有哪些提醒"、"查看提醒"、"取消提醒"）
 - intent=chat: 普通聊天
 
 action 规则：
 - todo: create（创建）、list（查看列表）、complete（完成）
-- reminder: create（创建）
+- reminder: create（创建）、list（查看列表）、cancel（取消）
 - memory: create（创建）
 - chat: none
 
@@ -60,11 +60,12 @@ content 规则：
 - 对于 memory：提取要记住的内容
 - 对于 todo create：提取待办事项内容
 - 对于 todo complete：提取要完成的待办事项关键词
-- 对于 reminder：提取提醒内容
-- 对于其他：可以留空
+- 对于 reminder create：提取提醒内容
+- 对于 reminder cancel：提取要取消的提醒关键词
+- 对于 list 操作：可以留空
 
 time 规则：
-- 只在 reminder 时提取时间描述，如"30分钟后"、"明天10点"、"今晚8点"
+- 只在 reminder create 时提取时间描述，如"30分钟后"、"明天10点"、"今晚8点"
 - 其他情况可以留空
 
 只返回 JSON，不要其他内容。`, userMessage)
@@ -200,33 +201,74 @@ func (a *AgentService) handleTodo(userID uint, result *models.AgentResult) (stri
 
 // handleReminder 处理提醒
 func (a *AgentService) handleReminder(userID uint, result *models.AgentResult) (string, error) {
-	// 解析时间
-	remindAt, err := parseTimeDescription(result.Time)
-	if err != nil {
-		return "", fmt.Errorf("无法解析时间: %w", err)
+	switch result.Action {
+	case models.ActionCreate:
+		// 解析时间
+		remindAt, err := parseTimeDescription(result.Time)
+		if err != nil {
+			return "", fmt.Errorf("无法解析时间: %w", err)
+		}
+
+		reminder := models.Reminder{
+			UserID:   userID,
+			Content:  result.Content,
+			RemindAt: remindAt,
+		}
+		if err := database.DB.Create(&reminder).Error; err != nil {
+			return "", fmt.Errorf("创建提醒失败: %w", err)
+		}
+
+		// 计算相对时间描述
+		duration := time.Until(remindAt)
+		var timeDesc string
+		if duration < time.Hour {
+			timeDesc = fmt.Sprintf("%d分钟后", int(duration.Minutes()))
+		} else if duration < 24*time.Hour {
+			timeDesc = fmt.Sprintf("%d小时后", int(duration.Hours()))
+		} else {
+			timeDesc = remindAt.Format("2006-01-02 15:04")
+		}
+
+		return fmt.Sprintf("好的，我会在%s提醒你%s。", timeDesc, result.Content), nil
+
+	case models.ActionList:
+		var reminders []models.Reminder
+		if err := database.DB.Where("user_id = ? AND sent = ?", userID, false).Order("remind_at asc").Find(&reminders).Error; err != nil {
+			return "", fmt.Errorf("查询提醒失败: %w", err)
+		}
+		if len(reminders) == 0 {
+			return "你目前没有待发送的提醒。", nil
+		}
+		var sb strings.Builder
+		sb.WriteString("你的提醒列表：\n")
+		for i, r := range reminders {
+			status := "⏰"
+			if r.RemindAt.Before(time.Now()) {
+				status = "⏳"
+			}
+			sb.WriteString(fmt.Sprintf("%d. %s %s（时间：%s）\n", i+1, status, r.Content, r.RemindAt.Format("2006-01-02 15:04")))
+		}
+		return sb.String(), nil
+
+	case models.ActionCancel:
+		// 模糊匹配提醒
+		var reminders []models.Reminder
+		if err := database.DB.Where("user_id = ? AND sent = ? AND content ILIKE ?", userID, false, "%"+result.Content+"%").Find(&reminders).Error; err != nil {
+			return "", fmt.Errorf("查询提醒失败: %w", err)
+		}
+		if len(reminders) == 0 {
+			return "没有找到匹配的提醒。", nil
+		}
+		if len(reminders) > 1 {
+			return "找到多个匹配的提醒，请更具体一些。", nil
+		}
+		if err := database.DB.Delete(&reminders[0]).Error; err != nil {
+			return "", fmt.Errorf("取消提醒失败: %w", err)
+		}
+		return fmt.Sprintf("已取消提醒：%s", reminders[0].Content), nil
 	}
 
-	reminder := models.Reminder{
-		UserID:  userID,
-		Content: result.Content,
-		RemindAt: remindAt,
-	}
-	if err := database.DB.Create(&reminder).Error; err != nil {
-		return "", fmt.Errorf("创建提醒失败: %w", err)
-	}
-
-	// 计算相对时间描述
-	duration := time.Until(remindAt)
-	var timeDesc string
-	if duration < time.Hour {
-		timeDesc = fmt.Sprintf("%d分钟后", int(duration.Minutes()))
-	} else if duration < 24*time.Hour {
-		timeDesc = fmt.Sprintf("%d小时后", int(duration.Hours()))
-	} else {
-		timeDesc = remindAt.Format("2006-01-02 15:04")
-	}
-
-	return fmt.Sprintf("好的，我会在%s提醒你%s。", timeDesc, result.Content), nil
+	return "", fmt.Errorf("未知的提醒操作")
 }
 
 // handleChat 处理普通聊天

@@ -68,6 +68,7 @@ const (
 	ActionCreate  Action = "create"
 	ActionList    Action = "list"
 	ActionComplete Action = "complete"
+	ActionCancel  Action = "cancel"
 	ActionNone    Action = "none"
 )
 
