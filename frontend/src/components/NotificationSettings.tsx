@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { WeatherSettings } from './WeatherSettings'
 import { AssistantSettings } from './AssistantSettings'
+import { ChatTest } from './ChatTest'
 
 interface NotificationChannel {
   id: number
@@ -63,7 +64,7 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
   const [channels, setChannels] = useState<NotificationChannel[]>([])
   const [thresholds, setThresholds] = useState<AlertThreshold[]>([])
   const [alertRecords, setAlertRecords] = useState<AlertRecord[]>([])
-  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather' | 'assistant'>('alerts')
+  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather' | 'assistant' | 'chat'>('chat')
   const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
   const [editingThreshold, setEditingThreshold] = useState<AlertThreshold | null>(null)
   const [showChannelForm, setShowChannelForm] = useState(false)
@@ -187,10 +188,11 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
 
         <div className="flex border-b dark:border-gray-700">
           {[
+            { key: 'chat', label: '对话测试', icon: <Bot className="h-4 w-4" /> },
             { key: 'alerts', label: '告警规则', icon: <AlertTriangle className="h-4 w-4" />, count: thresholds.length },
             { key: 'channels', label: '通知渠道', icon: <Bell className="h-4 w-4" />, count: channels.length },
             { key: 'weather', label: '天气推送', icon: <CloudSun className="h-4 w-4" /> },
-            { key: 'assistant', label: 'AI 助手', icon: <Bot className="h-4 w-4" /> },
+            { key: 'assistant', label: 'AI 设置', icon: <Bot className="h-4 w-4" /> },
             { key: 'logs', label: '告警记录', icon: <CheckCircle className="h-4 w-4" /> },
           ].map(tab => (
             <button
@@ -432,6 +434,11 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
           {/* Assistant Tab */}
           {activeTab === 'assistant' && (
             <AssistantSettings />
+          )}
+
+          {/* Chat Test Tab */}
+          {activeTab === 'chat' && (
+            <ChatTest />
           )}
         </div>
 
