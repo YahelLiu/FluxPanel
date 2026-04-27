@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { Activity, Wifi, WifiOff, Cpu, HardDrive, Monitor, MapPin, Clock, Trash2, GripVertical } from 'lucide-react'
+import { Activity, Wifi, WifiOff, Cpu, HardDrive, Monitor, MapPin, Clock, Trash2, GripVertical, Bell } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { NotificationSettings } from '@/components/NotificationSettings'
 
 interface Disk {
   name: string
@@ -64,11 +65,14 @@ export function Dashboard() {
   const [clientOrders, setClientOrders] = useState<Map<string, number>>(new Map())
   const [loading, setLoading] = useState(true)
   const [draggedClient, setDraggedClient] = useState<string | null>(null)
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
 
   // WebSocket connection
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsUrl = `${wsProtocol}//${window.location.host}/ws`
-  const { isConnected, lastEvent } = useWebSocket(wsUrl)
+  const { isConnected, lastEvent, connectionStatus, reconnectAttempts } = useWebSocket(wsUrl)
+  const websocketFailed = connectionStatus === 'failed'
 
   // Fetch client orders
   const fetchClientOrders = async () => {
@@ -89,23 +93,19 @@ export function Dashboard() {
   useEffect(() => {
     const fetchClients = async () => {
       try {
-        const [eventsRes] = await Promise.all([
-          fetch('/api/events?page_size=100'),
+        const [clientsRes] = await Promise.all([
+          fetch('/api/clients/latest'),
           fetchClientOrders()
         ])
-        const json = await eventsRes.json()
+        const json = await clientsRes.json()
         const clientMap = new Map<string, ClientData>()
 
-        // Process events and keep latest for each client
-        for (const event of json.events || []) {
-          const clientId = event.client_id
-          if (!clientMap.has(clientId) || new Date(event.created_at) > new Date(clientMap.get(clientId)!.last_seen)) {
-            clientMap.set(clientId, {
-              client_id: clientId,
-              last_seen: event.created_at,
-              data: event.data || {}
-            })
-          }
+        for (const client of json.clients || []) {
+          clientMap.set(client.client_id, {
+            client_id: client.client_id,
+            last_seen: client.last_seen,
+            data: client.data || {}
+          })
         }
 
         setClients(clientMap)
@@ -117,6 +117,11 @@ export function Dashboard() {
     }
 
     fetchClients()
+  }, [])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 15000)
+    return () => window.clearInterval(interval)
   }, [])
 
   // Update when new event arrives via WebSocket
@@ -226,8 +231,7 @@ export function Dashboard() {
   // Format time ago
   const formatTimeAgo = (dateStr: string) => {
     const date = new Date(dateStr)
-    const now = new Date()
-    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+    const seconds = Math.floor((now - date.getTime()) / 1000)
 
     if (seconds < 60) return `${seconds}秒前`
     if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟前`
@@ -254,8 +258,7 @@ export function Dashboard() {
   // Check if client is online (active in last 1 minute)
   const isOnline = (lastSeen: string) => {
     const date = new Date(lastSeen)
-    const now = new Date()
-    const minutes = (now.getTime() - date.getTime()) / 1000 / 60
+    const minutes = (now - date.getTime()) / 1000 / 60
     return minutes < 1
   }
 
@@ -268,7 +271,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={`min-h-screen bg-background transition duration-300 ${websocketFailed ? 'grayscale opacity-60' : ''}`}>
       {/* Header */}
       <header className="border-b">
         <div className="container mx-auto px-4 py-4">
@@ -278,6 +281,13 @@ export function Dashboard() {
               <h1 className="text-2xl font-bold">客户端监控面板</h1>
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowNotificationSettings(true)}
+                className="flex items-center gap-1 px-3 py-1.5 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 text-sm"
+              >
+                <Bell className="h-4 w-4" />
+                通知设置
+              </button>
               <div className="text-sm text-muted-foreground">
                 在线客户端: {Array.from(clients.values()).filter(c => isOnline(c.last_seen)).length} / {clients.size}
               </div>
@@ -286,10 +296,15 @@ export function Dashboard() {
                   <Wifi className="h-4 w-4" />
                   <span className="text-sm">实时连接</span>
                 </div>
-              ) : (
+              ) : websocketFailed ? (
                 <div className="flex items-center gap-1 text-red-600">
                   <WifiOff className="h-4 w-4" />
-                  <span className="text-sm">未连接</span>
+                  <span className="text-sm">连接失败</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 text-yellow-600">
+                  <WifiOff className="h-4 w-4" />
+                  <span className="text-sm">重连中 {reconnectAttempts > 0 && `(${reconnectAttempts}/5)`}</span>
                 </div>
               )}
             </div>
@@ -540,6 +555,11 @@ export function Dashboard() {
           </div>
         )}
       </main>
+
+      {/* Notification Settings Modal */}
+      {showNotificationSettings && (
+        <NotificationSettings onClose={() => setShowNotificationSettings(false)} />
+      )}
     </div>
   )
 }

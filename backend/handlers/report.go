@@ -3,6 +3,7 @@ package handlers
 import (
 	"client-monitor/database"
 	"client-monitor/models"
+	"client-monitor/notify"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -46,6 +47,14 @@ func Report(c *gin.Context) {
 
 	// Broadcast to WebSocket clients
 	BroadcastEvent(event)
+
+	// Send notification for error/warning events
+	if event.Status == "error" || event.Status == "warning" {
+		go notify.GetService().NotifyEvent(event)
+	}
+
+	// Check alert thresholds
+	go notify.GetAlertService().CheckEvent(event)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -155,6 +164,32 @@ func Events(c *gin.Context) {
 		Total:  total,
 		Events: events,
 	})
+}
+
+// LatestClients handles GET /api/clients/latest - get the latest event for each client.
+func LatestClients(c *gin.Context) {
+	type LatestClient struct {
+		ClientID string         `json:"client_id"`
+		LastSeen time.Time      `json:"last_seen"`
+		Data     datatypes.JSON `json:"data"`
+		Status   string         `json:"status"`
+	}
+
+	var latest []LatestClient
+	if err := database.DB.Raw(`
+		SELECT client_id, created_at AS last_seen, data, status
+		FROM (
+			SELECT DISTINCT ON (client_id) client_id, created_at, data, status
+			FROM events
+			ORDER BY client_id, created_at DESC
+		) latest_events
+		ORDER BY last_seen DESC
+	`).Scan(&latest).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch latest clients"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"clients": latest})
 }
 
 // HourlyStats handles GET /api/stats/hourly - hourly event counts for charts

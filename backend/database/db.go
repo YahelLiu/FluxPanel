@@ -24,7 +24,15 @@ func Connect(cfg *config.Config) error {
 	}
 
 	// Auto migrate
-	if err = DB.AutoMigrate(&models.Event{}, &models.ClientOrder{}); err != nil {
+	if err = DB.AutoMigrate(
+		&models.Event{},
+		&models.ClientOrder{},
+		&models.NotificationChannel{},
+		&models.NotificationRule{},
+		&models.NotificationLog{},
+		&models.AlertThreshold{},
+		&models.AlertRecord{},
+	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 
