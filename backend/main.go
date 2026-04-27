@@ -130,6 +130,7 @@ func main() {
 		{
 			assistant.GET("/llm", handlers.GetLLMConfig)
 			assistant.PUT("/llm", handlers.UpdateLLMConfig)
+			assistant.POST("/llm/test", handlers.TestLLM)
 			assistant.GET("/users", handlers.GetAIUsers)
 			assistant.GET("/conversations", handlers.GetConversations)
 			assistant.GET("/todos", handlers.GetTodos)

@@ -6,9 +6,42 @@ import (
 
 	"client-monitor/database"
 	"client-monitor/models"
+	"client-monitor/services"
 
 	"github.com/gin-gonic/gin"
 )
+
+// TestLLMRequest LLM 测试请求
+type TestLLMRequest struct {
+	Message string `json:"message" binding:"required"`
+}
+
+// TestLLM POST /api/assistant/llm/test - 测试 LLM
+func TestLLM(c *gin.Context) {
+	var req TestLLMRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 调用 LLM
+	llm := services.GetLLMService()
+	response, err := llm.Chat([]services.ChatMessage{
+		{Role: "user", Content: req.Message},
+	})
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"response": response,
+	})
+}
 
 // GetLLMConfig GET /api/assistant/llm - 获取 LLM 配置
 func GetLLMConfig(c *gin.Context) {
