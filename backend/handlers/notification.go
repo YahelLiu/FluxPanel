@@ -1,11 +1,16 @@
 package handlers
 
 import (
-	"client-monitor/database"
-	"client-monitor/models"
-	"client-monitor/notify"
+	"log"
 	"net/http"
 	"strconv"
+
+	"client-monitor/database"
+	"client-monitor/ilink"
+	"client-monitor/models"
+	"client-monitor/notify"
+	"client-monitor/notify/types"
+	"client-monitor/wecom"
 
 	"github.com/gin-gonic/gin"
 )
@@ -46,6 +51,7 @@ type CreateChannelRequest struct {
 	Trigger     models.TriggerCondition  `json:"trigger"`
 	Feishu      models.FeishuConfig      `json:"feishu"`
 	WechatWork  models.WechatWorkConfig  `json:"wechat_work"`
+	WechatILink models.WechatILinkConfig `json:"wechat_ilink"`
 	Description string                   `json:"description"`
 }
 
@@ -57,6 +63,18 @@ func CreateChannel(c *gin.Context) {
 		return
 	}
 
+	// 微信 iLink 只能创建一个
+	if req.Type == models.NotificationTypeWechatILink {
+		var count int64
+		database.DB.Model(&models.NotificationChannel{}).
+			Where("type = ?", models.NotificationTypeWechatILink).
+			Count(&count)
+		if count > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "微信 iLink 渠道已存在，请编辑现有渠道"})
+			return
+		}
+	}
+
 	channel := models.NotificationChannel{
 		Name:        req.Name,
 		Type:        req.Type,
@@ -65,6 +83,7 @@ func CreateChannel(c *gin.Context) {
 		Trigger:     req.Trigger,
 		Feishu:      req.Feishu,
 		WechatWork:  req.WechatWork,
+		WechatILink: req.WechatILink,
 		Description: req.Description,
 	}
 
@@ -89,6 +108,7 @@ type UpdateChannelRequest struct {
 	Trigger     models.TriggerCondition  `json:"trigger"`
 	Feishu      models.FeishuConfig      `json:"feishu"`
 	WechatWork  models.WechatWorkConfig  `json:"wechat_work"`
+	WechatILink models.WechatILinkConfig `json:"wechat_ilink"`
 	Description string                   `json:"description"`
 }
 
@@ -130,6 +150,7 @@ func UpdateChannel(c *gin.Context) {
 	}
 	channel.Feishu = req.Feishu
 	channel.WechatWork = req.WechatWork
+	channel.WechatILink = req.WechatILink
 	channel.Description = req.Description
 
 	if err := database.DB.Save(&channel).Error; err != nil {
@@ -182,20 +203,29 @@ func TestChannel(c *gin.Context) {
 		return
 	}
 
-	// 创建测试事件
-	testEvent := models.Event{
-		ID:        0,
-		ClientID:  "test-client",
-		EventType: "test",
-		Status:    "error",
-		CreatedAt: channel.CreatedAt,
+	title := "📢 测试通知"
+	content := "这是一条测试消息，用于验证通知渠道配置是否正确。"
+
+	// 根据渠道类型选择对应的驱动
+	var driverName string
+	switch channel.Type {
+	case models.NotificationTypeWechatILink:
+		driverName = "ilink"
+	case models.NotificationTypeFeishu:
+		driverName = "feishu"
+	default:
+		// 其他类型使用自动路由
+		if err := notify.GetNotifyService().SendSystem(title, content); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
 	}
 
-	if err := notify.GetService().SendNotification(&channel, testEvent); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"error":   err.Error(),
-		})
+	// 指定驱动发送
+	if err := notify.GetNotifyService().SendTo(driverName, types.NewNotifyMessage(types.MessageTypeSystem, title, content)); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
 		return
 	}
 
@@ -350,4 +380,126 @@ func ListLogs(c *gin.Context) {
 		"total": total,
 		"logs":  logs,
 	})
+}
+
+// --- 微信 iLink 登录 ---
+
+// GetWechatILinkQRCode GET /api/notifications/channels/wechat-ilink/qrcode - 获取登录二维码
+func GetWechatILinkQRCode(c *gin.Context) {
+	qr, err := ilink.FetchQRCode(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"qrcode_url": qr.QRCodeImgContent,
+		"qrcode":     qr.QRCode,
+	})
+}
+
+// GetWechatILinkStatus GET /api/notifications/channels/wechat-ilink/status - 检查登录状态
+func GetWechatILinkStatus(c *gin.Context) {
+	qrcode := c.Query("qrcode")
+	if qrcode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "qrcode required"})
+		return
+	}
+
+	creds, err := ilink.PollQRStatus(c.Request.Context(), qrcode, nil)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
+		return
+	}
+
+	// 调试日志
+	log.Printf("[ilink] Login success: BotToken=%s, ILinkBotID=%s, ILinkUserID=%s, BaseURL=%s",
+		creds.BotToken, creds.ILinkBotID, creds.ILinkUserID, creds.BaseURL)
+
+	// 登录成功，创建或更新微信 iLink 渠道
+	var channel models.NotificationChannel
+	result := database.DB.Where("type = ?", models.NotificationTypeWechatILink).First(&channel)
+
+	if result.Error != nil {
+		// 创建新渠道
+		channel = models.NotificationChannel{
+			Name:    "微信 iLink",
+			Type:    models.NotificationTypeWechatILink,
+			Mode:    models.NotificationModeApp,
+			Enabled: true,
+			WechatILink: models.WechatILinkConfig{
+				BotToken:    creds.BotToken,
+				ILinkBotID:  creds.ILinkBotID,
+				BaseURL:     creds.BaseURL,
+				ILinkUserID: creds.ILinkUserID,
+				LoggedIn:    true,
+			},
+		}
+		if err := database.DB.Create(&channel).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create channel"})
+			return
+		}
+	} else {
+		// 更新现有渠道
+		channel.WechatILink = models.WechatILinkConfig{
+			BotToken:    creds.BotToken,
+			ILinkBotID:  creds.ILinkBotID,
+			BaseURL:     creds.BaseURL,
+			ILinkUserID: creds.ILinkUserID,
+			LoggedIn:    true,
+		}
+		database.DB.Save(&channel)
+	}
+
+	// 清除通知器缓存
+	notify.GetService().ClearCache()
+
+	// 重置 wecom 客户端，让它重新从数据库加载凭证
+	wecom.ResetClient()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"channel": channel,
+	})
+}
+
+// GetWechatILinkChannel GET /api/notifications/channels/wechat-ilink - 获取微信 iLink 渠道
+func GetWechatILinkChannel(c *gin.Context) {
+	var channel models.NotificationChannel
+	result := database.DB.Where("type = ?", models.NotificationTypeWechatILink).First(&channel)
+
+	if result.Error != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"exists":   false,
+			"logged_in": false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"exists":    true,
+		"logged_in": channel.WechatILink.LoggedIn,
+		"channel":   channel,
+	})
+}
+
+// LogoutWechatILink POST /api/notifications/channels/wechat-ilink/logout - 微信登出
+func LogoutWechatILink(c *gin.Context) {
+	var channel models.NotificationChannel
+	result := database.DB.Where("type = ?", models.NotificationTypeWechatILink).First(&channel)
+
+	if result.Error != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	// 清除登录状态
+	channel.WechatILink.LoggedIn = false
+	channel.WechatILink.BotToken = ""
+	database.DB.Save(&channel)
+
+	// 清除缓存
+	notify.GetService().ClearCache()
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

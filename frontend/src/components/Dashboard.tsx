@@ -11,13 +11,6 @@ interface ClientOrder {
   channel_id: number
 }
 
-interface NotificationChannel {
-  id: number
-  name: string
-  type: string
-  enabled: boolean
-}
-
 interface Disk {
   name: string
   label?: string
@@ -77,7 +70,6 @@ interface WSEvent {
 export function Dashboard() {
   const [clients, setClients] = useState<Map<string, ClientData>>(new Map())
   const [clientOrders, setClientOrders] = useState<Map<string, ClientOrder>>(new Map())
-  const [channels, setChannels] = useState<NotificationChannel[]>([])
   const [loading, setLoading] = useState(true)
   const [draggedClient, setDraggedClient] = useState<string | null>(null)
   const [showNotificationSettings, setShowNotificationSettings] = useState(false)
@@ -104,25 +96,13 @@ export function Dashboard() {
     }
   }
 
-  // Fetch notification channels
-  const fetchChannels = async () => {
-    try {
-      const res = await fetch('/api/notifications/channels')
-      const data = await res.json()
-      setChannels(data.filter((c: NotificationChannel) => c.enabled))
-    } catch (error) {
-      console.error('Failed to fetch channels:', error)
-    }
-  }
-
   // Fetch initial client data
   useEffect(() => {
     const fetchClients = async () => {
       try {
         const [clientsRes] = await Promise.all([
           fetch('/api/clients/latest'),
-          fetchClientOrders(),
-          fetchChannels()
+          fetchClientOrders()
         ])
         const json = await clientsRes.json()
         const clientMap = new Map<string, ClientData>()
@@ -261,21 +241,20 @@ export function Dashboard() {
   }
 
   // Update client weather settings
-  const updateClientWeather = async (clientId: string, weatherEnabled: boolean, channelId: number) => {
+  const updateClientWeather = async (clientId: string, weatherEnabled: boolean) => {
     try {
       await fetch(`/api/clients/${encodeURIComponent(clientId)}/weather`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           weather_enabled: weatherEnabled,
-          channel_id: channelId
         })
       })
       // Update local state
       setClientOrders(prev => {
         const newMap = new Map(prev)
         const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0 }
-        newMap.set(clientId, { ...existing, weather_enabled: weatherEnabled, channel_id: channelId })
+        newMap.set(clientId, { ...existing, weather_enabled: weatherEnabled })
         return newMap
       })
     } catch (error) {
@@ -450,36 +429,12 @@ export function Dashboard() {
                         type="checkbox"
                         checked={clientOrders.get(client.client_id)?.weather_enabled || false}
                         onChange={(e) => {
-                          const currentOrder = clientOrders.get(client.client_id)
-                          updateClientWeather(
-                            client.client_id,
-                            e.target.checked,
-                            currentOrder?.channel_id || 0
-                          )
+                          updateClientWeather(client.client_id, e.target.checked)
                         }}
                         className="rounded"
                       />
                       <span className="text-xs">天气推送</span>
                     </label>
-                    {clientOrders.get(client.client_id)?.weather_enabled && channels.length > 0 && (
-                      <select
-                        value={clientOrders.get(client.client_id)?.channel_id || 0}
-                        onChange={(e) => {
-                          const currentOrder = clientOrders.get(client.client_id)
-                          updateClientWeather(
-                            client.client_id,
-                            currentOrder?.weather_enabled || false,
-                            Number(e.target.value)
-                          )
-                        }}
-                        className="flex-1 px-2 py-1 text-xs border rounded bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600"
-                      >
-                        <option value={0}>默认渠道</option>
-                        {channels.map(ch => (
-                          <option key={ch.id} value={ch.id}>{ch.name}</option>
-                        ))}
-                      </select>
-                    )}
                     {clientOrders.get(client.client_id)?.weather_enabled && client.data.location && (
                       <button
                         onClick={() => sendWeatherToClient(client.client_id)}

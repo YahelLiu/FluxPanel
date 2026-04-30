@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"client-monitor/config"
 	"client-monitor/database"
 	"client-monitor/handlers"
 	"client-monitor/models"
 	"client-monitor/notify"
+	"client-monitor/wecom"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -21,6 +27,19 @@ func main() {
 		log.Fatalf("Database connection failed: %v", err)
 	}
 	log.Println("Database connected successfully")
+
+	// Create root context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Println("Shutting down...")
+		cancel()
+	}()
 
 	// Initialize WebSocket
 	handlers.InitWebSocket()
@@ -43,6 +62,40 @@ func main() {
 		handlers.SendReminderViaWebSocket(reminder)
 	})
 	log.Println("Reminder WebSocket callback registered")
+
+	// Start WeCom iLink monitor if wechat_ilink channel exists and is logged in
+	if wecom.HasWechatILinkChannel() {
+		go startWeComMonitor(ctx)
+		log.Println("WeCom iLink monitor started")
+	} else {
+		log.Println("WeCom iLink not configured, skipping monitor startup")
+	}
+
+	// 定期检查并尝试启动 Monitor（支持热加载，登录后自动启动）
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		monitorStarted := wecom.HasWechatILinkChannel()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				hasChannel := wecom.HasWechatILinkChannel()
+				if hasChannel && !monitorStarted {
+					log.Println("[wecom] Detected new login, starting monitor...")
+					go startWeComMonitor(ctx)
+					monitorStarted = true
+				}
+				// 如果用户登出，重置状态以便下次登录能重新启动
+				if !hasChannel {
+					monitorStarted = false
+				}
+			}
+		}
+	}()
 
 	// Setup Gin router
 	r := gin.Default()
@@ -80,6 +133,12 @@ func main() {
 			notifications.PUT("/channels/:id", handlers.UpdateChannel)
 			notifications.DELETE("/channels/:id", handlers.DeleteChannel)
 			notifications.POST("/channels/:id/test", handlers.TestChannel)
+
+			// Wechat iLink 登录
+			notifications.GET("/channels/wechat-ilink", handlers.GetWechatILinkChannel)
+			notifications.GET("/channels/wechat-ilink/qrcode", handlers.GetWechatILinkQRCode)
+			notifications.GET("/channels/wechat-ilink/status", handlers.GetWechatILinkStatus)
+			notifications.POST("/channels/wechat-ilink/logout", handlers.LogoutWechatILink)
 
 			// Rules
 			notifications.GET("/rules", handlers.ListRules)
@@ -122,16 +181,28 @@ func main() {
 		}
 
 		// WeCom routes
-		wecom := api.Group("/wecom")
+		wecomGroup := api.Group("/wecom")
 		{
-			wecom.GET("/callback", handlers.HandleWeComVerify)
-			wecom.POST("/callback", handlers.HandleWeComCallback)
-			wecom.GET("/config", handlers.GetWeComConfig)
-			wecom.PUT("/config", handlers.UpdateWeComConfig)
-			wecom.POST("/test", handlers.HandleWeComTest)
-			wecom.POST("/chat", handlers.HandleWeComChat)
-			wecom.GET("/reminders/pending", handlers.GetPendingReminders)
-			wecom.POST("/reminders/:id/sent", handlers.MarkReminderSent)
+			// Login (iLink)
+			wecomGroup.GET("/login/qrcode", handlers.GetLoginQRCode)
+			wecomGroup.GET("/login/status", handlers.GetLoginStatus)
+			wecomGroup.GET("/status", handlers.GetWeComStatus)
+			wecomGroup.DELETE("/session", handlers.Logout)
+
+			// Monitor status
+			wecomGroup.GET("/monitor/status", handlers.GetMonitorStatus)
+
+			// Test and chat
+			wecomGroup.POST("/test", handlers.HandleWeComTest)
+			wecomGroup.POST("/chat", handlers.HandleWeComChat)
+
+			// Legacy config (keep for compatibility)
+			wecomGroup.GET("/config", handlers.GetWeComConfig)
+			wecomGroup.PUT("/config", handlers.UpdateWeComConfig)
+
+			// Reminders
+			wecomGroup.GET("/reminders/pending", handlers.GetPendingReminders)
+			wecomGroup.POST("/reminders/:id/sent", handlers.MarkReminderSent)
 		}
 
 		// AI Assistant routes
@@ -165,4 +236,15 @@ func main() {
 	if err := r.Run(":" + cfg.ServerPort); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
+}
+
+// startWeComMonitor 启动 WeCom iLink 监听器
+func startWeComMonitor(ctx context.Context) {
+	monitor, err := wecom.NewMonitor()
+	if err != nil {
+		log.Printf("[wecom] Failed to create monitor: %v", err)
+		return
+	}
+
+	monitor.RunWithRestart(ctx)
 }

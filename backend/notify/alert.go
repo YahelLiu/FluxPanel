@@ -9,6 +9,7 @@ import (
 
 	"client-monitor/database"
 	"client-monitor/models"
+	"client-monitor/notify/types"
 )
 
 // AlertService 告警服务
@@ -162,35 +163,16 @@ func (a *AlertService) handleAlertTriggered(threshold models.AlertThreshold, eve
 
 // sendAlertNotification 发送告警通知
 func (a *AlertService) sendAlertNotification(threshold models.AlertThreshold, event models.Event, value float64) {
-	// 获取通知渠道
-	channelIDInts := make([]int, len(threshold.ChannelIDs))
-	for i, v := range threshold.ChannelIDs {
-		channelIDInts[i] = v
-	}
-	var channels []models.NotificationChannel
-	database.DB.Where("id IN ? AND enabled = ?", channelIDInts, true).Find(&channels)
-
 	metricName := a.getMetricName(threshold.MetricType)
-	title := fmt.Sprintf("🚨 %s", threshold.Name)
+	title := threshold.Name
 	content := fmt.Sprintf(
-		"**%s** 超过阈值\n\n当前值: %.1f%%\n阈值: %.1f%%",
+		"%s 超过阈值\n\n当前值: %.1f%%\n阈值: %.1f%%",
 		metricName, value, threshold.Threshold,
 	)
 
-	// 创建告警事件用于通知
-	alertEvent := models.Event{
-		ClientID:  event.ClientID,
-		EventType: "alert",
-		Status:    "error",
-		CreatedAt: time.Now(),
-	}
-
-	for _, channel := range channels {
-		go func(ch models.NotificationChannel) {
-			if err := GetService().SendAlertNotification(&ch, title, content, alertEvent); err != nil {
-				log.Printf("Failed to send alert notification via %s: %v", ch.Name, err)
-			}
-		}(channel)
+	// 使用统一的通知服务发送告警
+	if err := GetNotifyService().SendAlert(title, content, types.PriorityHigh); err != nil {
+		log.Printf("[alert] Failed to send alert notification: %v", err)
 	}
 }
 

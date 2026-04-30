@@ -11,8 +11,9 @@ import (
 type NotificationType string
 
 const (
-	NotificationTypeFeishu     NotificationType = "feishu"
-	NotificationTypeWechatWork NotificationType = "wechat_work"
+	NotificationTypeFeishu      NotificationType = "feishu"
+	NotificationTypeWechatWork  NotificationType = "wechat_work"
+	NotificationTypeWechatILink NotificationType = "wechat_ilink"
 )
 
 // NotificationMode 通知模式
@@ -86,19 +87,47 @@ func (w WechatWorkConfig) Value() (driver.Value, error) {
 	return json.Marshal(w)
 }
 
+// WechatILinkConfig 微信 iLink 配置（扫码登录）
+type WechatILinkConfig struct {
+	BotToken    string   `json:"bot_token,omitempty"`
+	ILinkBotID  string   `json:"ilink_bot_id,omitempty"`
+	BaseURL     string   `json:"base_url,omitempty"`
+	ILinkUserID string   `json:"ilink_user_id,omitempty"`
+	UserIDs     []string `json:"user_ids,omitempty"` // 接收通知的用户列表
+	LoggedIn    bool     `json:"logged_in"`          // 是否已登录
+}
+
+// Scan implements sql.Scanner for WechatILinkConfig
+func (w *WechatILinkConfig) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
+	}
+	return json.Unmarshal(bytes, w)
+}
+
+// Value implements driver.Valuer for WechatILinkConfig
+func (w WechatILinkConfig) Value() (driver.Value, error) {
+	return json.Marshal(w)
+}
+
 // NotificationChannel 通知渠道配置
 type NotificationChannel struct {
-	ID          uint             `gorm:"primaryKey" json:"id"`
-	Name        string           `gorm:"size:100;not null" json:"name"`
-	Type        NotificationType `gorm:"size:20;not null" json:"type"`
-	Mode        NotificationMode `gorm:"size:20;not null" json:"mode"`
-	Enabled     bool             `gorm:"default:true" json:"enabled"`
-	Trigger     TriggerCondition `gorm:"size:20;default:error" json:"trigger"`
-	Feishu      FeishuConfig     `gorm:"type:jsonb" json:"feishu"`
-	WechatWork  WechatWorkConfig `gorm:"type:jsonb" json:"wechat_work"`
-	Description string           `gorm:"size:500" json:"description"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	ID           uint               `gorm:"primaryKey" json:"id"`
+	Name         string             `gorm:"size:100;not null" json:"name"`
+	Type         NotificationType   `gorm:"size:20;not null" json:"type"`
+	Mode         NotificationMode   `gorm:"size:20;not null" json:"mode"`
+	Enabled      bool               `gorm:"default:true" json:"enabled"`
+	Trigger      TriggerCondition   `gorm:"size:20;default:error" json:"trigger"`
+	Feishu       FeishuConfig       `gorm:"type:jsonb" json:"feishu"`
+	WechatWork   WechatWorkConfig   `gorm:"type:jsonb" json:"wechat_work"`
+	WechatILink  WechatILinkConfig  `gorm:"type:jsonb" json:"wechat_ilink"`
+	Description  string             `gorm:"size:500" json:"description"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
 }
 
 // NotificationLog 通知日志

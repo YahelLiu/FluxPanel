@@ -91,47 +91,18 @@ func (r *ReminderService) checkAndSend() {
 
 // sendReminder 发送提醒
 func (r *ReminderService) sendReminder(reminder *models.Reminder) error {
-	// 获取用户信息
-	var user models.AIUser
-	if err := database.DB.First(&user, reminder.UserID).Error; err != nil {
-		return err
-	}
-
-	// 构建消息内容
-	content := "⏰ 提醒：" + reminder.Content
-
 	// 先尝试通过 WebSocket 发送（用于测试环境）
-	// 这里的 handlers 包需要导入，但会有循环依赖，所以我们用回调
 	if sendReminderCallback != nil {
 		sendReminderCallback(reminder)
 	}
 
-	// 检查企业微信配置
-	var config models.WeComConfig
-	err := database.DB.Where("enabled = ?", true).First(&config).Error
-	if err != nil {
-		// 没有企业微信配置，只打印日志（用于测试环境）
-		log.Printf("[测试环境] 提醒用户 %s: %s", user.WecomUserID, content)
-		return nil
+	// 使用统一的通知服务发送提醒
+	if err := GetNotifyService().SendReminder(reminder.Content); err != nil {
+		log.Printf("[reminder] Failed to send reminder: %v", err)
+		return err
 	}
 
-	// 使用企业微信发送消息
-	wechatConfig := models.WechatWorkConfig{
-		CorpID:  config.CorpID,
-		AgentID: config.AgentID,
-		Secret:  config.Secret,
-	}
-
-	notifier := NewWechatWorkNotifier(wechatConfig)
-
-	// 创建事件用于发送
-	event := models.Event{
-		ClientID:  "assistant",
-		EventType: "reminder",
-		Status:    "info",
-	}
-
-	return notifier.SendAppMessage(user.WecomUserID, "提醒", content, event)
+	return nil
 }
 
 // sendReminderCallback 发送提醒的回调函数（用于 WebSocket 推送）

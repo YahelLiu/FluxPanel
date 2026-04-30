@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # Set Go proxy for China
 ENV GOPROXY=https://goproxy.cn,direct
@@ -9,7 +9,7 @@ WORKDIR /app
 # Copy go mod files
 COPY go.mod ./
 
-# Copy source code first for go mod tidy
+# Copy source code
 COPY . .
 
 # Download dependencies and build

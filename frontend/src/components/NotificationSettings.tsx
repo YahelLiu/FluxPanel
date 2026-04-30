@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Bell, Plus, Trash2, Edit2, Check, X, Send, AlertTriangle, CheckCircle, AlertCircle, Gauge, CloudSun, Bot } from 'lucide-react'
+import { Bell, Plus, Trash2, Edit2, Check, X, Send, AlertTriangle, CheckCircle, AlertCircle, Gauge, CloudSun, Bot, QrCode } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { WeatherSettings } from './WeatherSettings'
 import { AssistantSettings } from './AssistantSettings'
-import { ChatTest } from './ChatTest'
+import QRCode from 'qrcode'
 
 interface NotificationChannel {
   id: number
   name: string
-  type: 'feishu' | 'wechat_work'
+  type: 'feishu' | 'wechat_work' | 'wechat_ilink'
   mode: 'webhook' | 'app'
   enabled: boolean
   trigger: 'error' | 'warning' | 'all' | 'custom'
@@ -25,6 +25,14 @@ interface NotificationChannel {
     agent_id?: number
     secret?: string
     user_ids?: string[]
+  }
+  wechat_ilink: {
+    bot_token?: string
+    ilink_bot_id?: string
+    base_url?: string
+    ilink_user_id?: string
+    user_ids?: string[]
+    logged_in?: boolean
   }
   description?: string
   created_at: string
@@ -64,7 +72,7 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
   const [channels, setChannels] = useState<NotificationChannel[]>([])
   const [thresholds, setThresholds] = useState<AlertThreshold[]>([])
   const [alertRecords, setAlertRecords] = useState<AlertRecord[]>([])
-  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather' | 'assistant' | 'chat'>('chat')
+  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather' | 'assistant'>('channels')
   const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
   const [editingThreshold, setEditingThreshold] = useState<AlertThreshold | null>(null)
   const [showChannelForm, setShowChannelForm] = useState(false)
@@ -153,7 +161,13 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
     alert(data.success ? '测试告警发送成功！' : `测试失败: ${data.error}`)
   }
 
-  const getTypeLabel = (type: string) => type === 'feishu' ? '飞书' : '企业微信'
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'feishu': return '飞书'
+      case 'wechat_ilink': return '微信 iLink'
+      default: return type
+    }
+  }
   const getModeLabel = (mode: string) => mode === 'webhook' ? '群机器人' : '应用消息'
   const getMetricLabel = (metric: string) => {
     switch (metric) {
@@ -188,7 +202,6 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
 
         <div className="flex border-b dark:border-gray-700">
           {[
-            { key: 'chat', label: '对话测试', icon: <Bot className="h-4 w-4" /> },
             { key: 'alerts', label: '告警规则', icon: <AlertTriangle className="h-4 w-4" />, count: thresholds.length },
             { key: 'channels', label: '通知渠道', icon: <Bell className="h-4 w-4" />, count: channels.length },
             { key: 'weather', label: '天气推送', icon: <CloudSun className="h-4 w-4" /> },
@@ -435,11 +448,6 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
           {activeTab === 'assistant' && (
             <AssistantSettings />
           )}
-
-          {/* Chat Test Tab */}
-          {activeTab === 'chat' && (
-            <ChatTest />
-          )}
         </div>
 
         {showChannelForm && (
@@ -477,15 +485,83 @@ function ChannelForm({ channel, onClose, onSave }: { channel: NotificationChanne
       app_id: channel?.feishu?.app_id || '',
       app_secret: channel?.feishu?.app_secret || '',
       user_ids: channel?.feishu?.user_ids?.join(', ') || ''
-    },
-    wechat_work: {
-      webhook_url: channel?.wechat_work?.webhook_url || '',
-      corp_id: channel?.wechat_work?.corp_id || '',
-      agent_id: channel?.wechat_work?.agent_id || '',
-      secret: channel?.wechat_work?.secret || '',
-      user_ids: channel?.wechat_work?.user_ids?.join(', ') || ''
     }
   })
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null)
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null)
+  const [qrCodeKey, setQrCodeKey] = useState<string | null>(null)
+  const [isLoggedIn, setIsLoggedIn] = useState(channel?.wechat_ilink?.logged_in || false)
+  const [pollingStatus, setPollingStatus] = useState(false)
+
+  // Generate QR code image from URL
+  useEffect(() => {
+    if (qrCodeUrl) {
+      QRCode.toDataURL(qrCodeUrl, {
+        width: 200,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#ffffff'
+        }
+      }).then(setQrCodeDataUrl).catch(console.error)
+    } else {
+      setQrCodeDataUrl(null)
+    }
+  }, [qrCodeUrl])
+
+  // Fetch QR code for WeChat iLink login
+  const fetchQRCode = async () => {
+    try {
+      const res = await fetch('/api/notifications/channels/wechat-ilink/qrcode')
+      const data = await res.json()
+      setQrCodeUrl(data.qrcode_url)
+      setQrCodeKey(data.qrcode)
+      setPollingStatus(true)
+    } catch (error) {
+      console.error('Failed to fetch QR code:', error)
+      alert('获取二维码失败')
+    }
+  }
+
+  // Poll for login status
+  useEffect(() => {
+    if (!pollingStatus || !qrCodeKey) return
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/notifications/channels/wechat-ilink/status?qrcode=${qrCodeKey}`)
+        const data = await res.json()
+        if (data.status === 'success') {
+          setPollingStatus(false)
+          setIsLoggedIn(true)
+          setQrCodeUrl(null)
+          setQrCodeDataUrl(null)
+          // Auto-save the channel after successful login
+          if (!channel) {
+            // Create the channel automatically
+            const createRes = await fetch('/api/notifications/channels', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: formData.name || '微信 iLink',
+                type: 'wechat_ilink',
+                mode: 'app',
+                enabled: true
+              })
+            })
+            if (createRes.ok) {
+              onSave()
+            }
+          }
+        }
+      } catch (error) {
+        // Continue polling on error
+      }
+    }
+
+    const interval = setInterval(poll, 2000)
+    return () => clearInterval(interval)
+  }, [pollingStatus, qrCodeKey, channel, formData.name, onSave])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -505,15 +581,8 @@ function ChannelForm({ channel, onClose, onSave }: { channel: NotificationChanne
         app_secret: formData.feishu.app_secret || undefined,
         user_ids: formData.feishu.user_ids ? formData.feishu.user_ids.split(',').map(s => s.trim()).filter(Boolean) : []
       }
-    } else {
-      payload.wechat_work = {
-        webhook_url: formData.wechat_work.webhook_url || undefined,
-        corp_id: formData.wechat_work.corp_id || undefined,
-        agent_id: formData.wechat_work.agent_id ? Number(formData.wechat_work.agent_id) : undefined,
-        secret: formData.wechat_work.secret || undefined,
-        user_ids: formData.wechat_work.user_ids ? formData.wechat_work.user_ids.split(',').map(s => s.trim()).filter(Boolean) : []
-      }
     }
+    // wechat_ilink 不需要额外配置，用户信息在登录时自动保存
 
     const url = channel ? `/api/notifications/channels/${channel.id}` : '/api/notifications/channels'
     const res = await fetch(url, {
@@ -541,16 +610,51 @@ function ChannelForm({ channel, onClose, onSave }: { channel: NotificationChanne
               <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">渠道类型</label>
               <select value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value as any })} className="w-full px-3 py-2 border rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600">
                 <option value="feishu">飞书</option>
-                <option value="wechat_work">企业微信</option>
+                <option value="wechat_ilink">微信 iLink (扫码登录)</option>
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">通知方式</label>
-              <select value={formData.mode} onChange={e => setFormData({ ...formData, mode: e.target.value as any })} className="w-full px-3 py-2 border rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600">
-                <option value="webhook">群机器人 Webhook</option>
-                <option value="app">应用消息 (单聊)</option>
-              </select>
-            </div>
+
+            {/* WeChat iLink specific UI */}
+            {formData.type === 'wechat_ilink' && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                  {isLoggedIn ? (
+                    <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                      <CheckCircle className="h-5 w-5" />
+                      <span>已登录微信</span>
+                    </div>
+                  ) : qrCodeDataUrl ? (
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">请使用微信扫码登录</p>
+                      <img src={qrCodeDataUrl} alt="微信登录二维码" className="mx-auto border-4 border-white shadow-lg" />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">正在等待扫码...</p>
+                    </div>
+                  ) : (
+                    <div className="text-center">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">微信 iLink 需要扫码登录</p>
+                      <button
+                        type="button"
+                        onClick={fetchQRCode}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                      >
+                        <QrCode className="h-4 w-4" />
+                        获取登录二维码
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {formData.type !== 'wechat_ilink' && (
+              <div>
+                <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">通知方式</label>
+                <select value={formData.mode} onChange={e => setFormData({ ...formData, mode: e.target.value as any })} className="w-full px-3 py-2 border rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600">
+                  <option value="webhook">群机器人 Webhook</option>
+                  <option value="app">应用消息 (单聊)</option>
+                </select>
+              </div>
+            )}
 
             {formData.type === 'feishu' && formData.mode === 'webhook' && (
               <div>
@@ -559,17 +663,19 @@ function ChannelForm({ channel, onClose, onSave }: { channel: NotificationChanne
               </div>
             )}
 
-            {formData.type === 'wechat_work' && formData.mode === 'webhook' && (
-              <div>
-                <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Webhook 地址</label>
-                <input type="url" value={formData.wechat_work.webhook_url} onChange={e => setFormData({ ...formData, wechat_work: { ...formData.wechat_work, webhook_url: e.target.value } })} className="w-full px-3 py-2 border rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." />
+            {formData.type !== 'wechat_ilink' && (
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="enabled" checked={formData.enabled} onChange={e => setFormData({ ...formData, enabled: e.target.checked })} className="rounded" />
+                <label htmlFor="enabled" className="text-sm text-gray-700 dark:text-gray-300">启用</label>
               </div>
             )}
 
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="enabled" checked={formData.enabled} onChange={e => setFormData({ ...formData, enabled: e.target.checked })} className="rounded" />
-              <label htmlFor="enabled" className="text-sm text-gray-700 dark:text-gray-300">启用</label>
-            </div>
+            {formData.type === 'wechat_ilink' && isLoggedIn && (
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="enabled-ilink" checked={formData.enabled} onChange={e => setFormData({ ...formData, enabled: e.target.checked })} className="rounded" />
+                <label htmlFor="enabled-ilink" className="text-sm text-gray-700 dark:text-gray-300">启用</label>
+              </div>
+            )}
           </div>
           <div className="p-4 border-t dark:border-gray-700 flex justify-end gap-2">
             <button type="button" onClick={onClose} className="px-4 py-2 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600">取消</button>

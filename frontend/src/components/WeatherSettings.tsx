@@ -6,6 +6,11 @@ interface WeatherConfig {
   id?: number
   api_key: string
   api_host: string
+  enabled: boolean
+}
+
+interface WeatherSettingsProps {
+  channels?: NotificationChannel[]
 }
 
 interface NotificationChannel {
@@ -15,14 +20,11 @@ interface NotificationChannel {
   enabled: boolean
 }
 
-interface WeatherSettingsProps {
-  channels: NotificationChannel[]
-}
-
-export function WeatherSettings({ channels: _channels }: WeatherSettingsProps) {
+export function WeatherSettings(_props: WeatherSettingsProps) {
   const [config, setConfig] = useState<WeatherConfig>({
     api_key: '',
     api_host: 'devapi.qweather.com',
+    enabled: true,
   })
   const [testLocation, setTestLocation] = useState('北京')
   const [testing, setTesting] = useState(false)
@@ -39,6 +41,7 @@ export function WeatherSettings({ channels: _channels }: WeatherSettingsProps) {
       setConfig({
         api_key: data.api_key || '',
         api_host: data.api_host || 'devapi.qweather.com',
+        enabled: data.enabled ?? true,
       })
     } catch (error) {
       console.error('Failed to fetch weather config:', error)
@@ -81,7 +84,7 @@ export function WeatherSettings({ channels: _channels }: WeatherSettingsProps) {
       if (data.success) {
         const weather = data.weather
         const today = weather.daily?.[0]
-        alert(`测试成功！\n${today?.fxDate}\n温度: ${today?.tempMin}°C ~ ${today?.tempMax}°C\n白天: ${today?.textDay}\n夜间: ${today?.textNight}`)
+        alert(`测试成功！\n${today?.fx_date}\n温度: ${today?.temp_min}°C ~ ${today?.temp_max}°C\n白天: ${today?.text_day}\n夜间: ${today?.text_night}`)
       } else {
         alert(`测试失败: ${data.error}`)
       }
@@ -98,8 +101,8 @@ export function WeatherSettings({ channels: _channels }: WeatherSettingsProps) {
         <h4 className="font-medium text-blue-800 dark:text-blue-300 mb-2">🌤️ 天气推送说明</h4>
         <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
           <li>• 使用和风天气 API 获取天气预报数据</li>
+          <li>• 天气推送会发送到已登录的微信 iLink</li>
           <li>• 在客户端卡片上为每个设备单独开启天气推送</li>
-          <li>• 每个设备可选择使用不同的通知渠道</li>
           <li>• 需要先在和风天气开放平台注册获取 API Key</li>
         </ul>
       </div>
@@ -132,7 +135,16 @@ export function WeatherSettings({ channels: _channels }: WeatherSettingsProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={config.enabled}
+                onChange={e => setConfig({ ...config, enabled: e.target.checked })}
+                className="rounded"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300">启用定时推送</span>
+            </label>
             <button
               onClick={saveConfig}
               disabled={saving}

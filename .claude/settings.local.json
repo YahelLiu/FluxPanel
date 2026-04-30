@@ -1,7 +1,28 @@
 {
   "permissions": {
     "allow": [
-      "Bash(go mod *)"
+      "Bash(go mod *)",
+      "Bash(go build *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:8080/api/notifications/channels)",
+      "Bash(curl -s -X POST http://localhost:8080/api/notifications/channels/1/test)",
+      "Bash(curl -s http://localhost:8080/api/alerts/thresholds)",
+      "Bash(curl -s -X PUT http://localhost:8080/api/alerts/thresholds/2 -H \"Content-Type: application/json\" -d '{\"name\":\"磁盘空间告警\",\"metric_type\":\"disk\",\"operator\":\">=\",\"threshold\":80,\"channel_ids\":[1],\"enabled\":true}')",
+      "Bash(docker exec *)",
+      "Bash(docker-compose up *)",
+      "WebFetch(domain:dev.qweather.com)",
+      "Bash(curl -s http://localhost:8080/api/weather/config)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(cmd /c \"cd /d d:\\\\code\\\\apps\\\\FluxPanel\\\\backend && go build ./...\")",
+      "Bash(where go *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(//d/code/apps/weclaw/cmd/weclaw/**)",
+      "Read(//d/code/apps/**)",
+      "Bash(npx tsc *)",
+      "Bash(powershell -Command \"Get-Content 'd:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\handlers\\\\notification.go' -Encoding UTF8 | Select-Object -Skip 437 -First 10\")",
+      "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\('d:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\handlers\\\\notification.go', [System.Text.Encoding]::UTF8\\)\")"
     ]
   }
 }
