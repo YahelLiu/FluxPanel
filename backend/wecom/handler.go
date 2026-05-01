@@ -12,30 +12,42 @@ import (
 // MessageHandler 消息处理器
 type MessageHandler struct {
 	handler *messaging.Handler
+	router  *agent.AgentRouter
 }
 
 // NewMessageHandler 创建消息处理器
 func NewMessageHandler() *MessageHandler {
-	fluxPanelAgent := NewFluxPanelAgent()
+	// 创建持久化器
+	persister := NewPreferencePersister()
 
-	// 创建 weclaw messaging handler
+	// 创建路由器
+	router := agent.NewAgentRouter(persister)
+
+	// 注册适配器
+	router.Register(agent.NewHTTPAgent())   // HTTP API 适配器（默认）
+	router.Register(agent.NewClaudeAgent()) // Claude CLI 适配器
+
+	// 创建 messaging handler
 	h := messaging.NewHandler(
 		func(ctx context.Context, name string) agent.Agent {
-			// 只支持 fluxpanel agent
-			if name == "fluxpanel" {
-				return fluxPanelAgent
-			}
-			return nil
+			return router.Get(name)
 		},
 		nil, // SaveDefaultFunc - 不需要持久化
 	)
 
-	// 设置默认 agent
-	h.SetDefaultAgent("fluxpanel", fluxPanelAgent)
+	// 设置路由器
+	h.SetRouter(router)
 
-	log.Println("[wecom] Message handler initialized with fluxpanel agent")
+	// 兼容旧代码：设置默认 agent
+	httpAgent := agent.NewHTTPAgent()
+	h.SetDefaultAgent("api", httpAgent)
 
-	return &MessageHandler{handler: h}
+	log.Println("[wecom] Message handler initialized with router (api, claude)")
+
+	return &MessageHandler{
+		handler: h,
+		router:  router,
+	}
 }
 
 // HandleMessage 处理消息入口

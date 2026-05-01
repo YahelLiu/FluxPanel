@@ -2,7 +2,9 @@ package messaging
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,8 +27,9 @@ type Handler struct {
 	agents        map[string]agent.Agent // name -> running agent
 	factory       AgentFactory
 	saveDefault   SaveDefaultFunc
-	contextTokens sync.Map // map[userID]contextToken
-	seenMsgs      sync.Map // map[int64]time.Time — dedup by message_id
+	router        *agent.AgentRouter // AI 后端路由器
+	contextTokens sync.Map           // map[userID]contextToken
+	seenMsgs      sync.Map           // map[int64]time.Time — dedup by message_id
 }
 
 // NewHandler creates a new message handler.
@@ -36,6 +39,11 @@ func NewHandler(factory AgentFactory, saveDefault SaveDefaultFunc) *Handler {
 		factory:     factory,
 		saveDefault: saveDefault,
 	}
+}
+
+// SetRouter 设置 AI 后端路由器
+func (h *Handler) SetRouter(router *agent.AgentRouter) {
+	h.router = router
 }
 
 // SetDefaultAgent sets the default agent (already started).
@@ -96,12 +104,78 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	// Generate a clientID for this reply
 	clientID := uuid.New().String()
 
-	// Send to default agent
-	h.sendToDefaultAgent(ctx, client, msg, text, clientID)
+	// 处理指令
+	if reply, handled := h.handleCommand(ctx, client, msg, text, clientID); handled {
+		if reply != "" {
+			SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
+		}
+		return
+	}
+
+	// Send to agent
+	h.sendToAgent(ctx, client, msg, text, clientID)
 }
 
-// sendToDefaultAgent sends the message to the default agent and replies.
-func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text, clientID string) {
+// handleCommand 处理切换指令，返回 (回复内容, 是否已处理)
+func (h *Handler) handleCommand(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text, clientID string) (string, bool) {
+	if h.router == nil {
+		return "", false
+	}
+
+	text = strings.TrimSpace(text)
+
+	switch {
+	case text == "/claude":
+		if err := h.router.Switch(msg.FromUserID, "claude"); err != nil {
+			return fmt.Sprintf("切换失败: %v", err), true
+		}
+		return "已切换到 Claude 模式 🤖", true
+
+	case text == "/api":
+		if err := h.router.Switch(msg.FromUserID, "api"); err != nil {
+			return fmt.Sprintf("切换失败: %v", err), true
+		}
+		return "已切换到 API 模式 🌐", true
+
+	case text == "/mode":
+		adapterName := h.router.GetCurrentAdapterName(msg.FromUserID)
+		adapters := h.router.ListAdapters()
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("当前模式: %s\n\n", adapterName))
+		sb.WriteString("可用模式:\n")
+		for _, info := range adapters {
+			marker := " "
+			if info.Name == adapterName {
+				marker = "●"
+			}
+			sb.WriteString(fmt.Sprintf("%s %s (%s)\n", marker, info.Name, info.Model))
+		}
+		return sb.String(), true
+
+	case text == "/models":
+		adapters := h.router.ListAdapters()
+		var sb strings.Builder
+		sb.WriteString("可用模式:\n")
+		for _, info := range adapters {
+			sb.WriteString(fmt.Sprintf("• %s - %s (%s)\n", info.Name, info.Model, info.Type))
+		}
+		return sb.String(), true
+
+	case text == "/help":
+		return `可用指令:
+/claude - 切换到 Claude 模式
+/api - 切换到 API 模式
+/mode - 查看当前模式
+/models - 查看所有可用模式
+/help - 显示帮助`, true
+	}
+
+	return "", false
+}
+
+// sendToAgent sends the message to the appropriate agent and replies.
+func (h *Handler) sendToAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text, clientID string) {
 	log.Printf("[handler] processing message from %s: %q", msg.FromUserID, truncate(text, 100))
 
 	// Send typing indicator
@@ -111,19 +185,33 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, 
 		}
 	}()
 
-	ag := h.getDefaultAgent()
 	var reply string
-	if ag != nil {
+
+	// 优先使用路由器
+	if h.router != nil {
 		var err error
-		reply, err = ag.Chat(ctx, msg.FromUserID, text)
+		reply, err = h.router.Chat(ctx, msg.FromUserID, text)
 		if err != nil {
-			reply = "抱歉，处理消息时出错了。"
-			log.Printf("[handler] agent error: %v", err)
+			reply = fmt.Sprintf("抱歉，处理消息时出错了: %v", err)
+			log.Printf("[handler] router error: %v", err)
 		}
-		log.Printf("[handler] agent reply to %s: %q", msg.FromUserID, truncate(reply, 100))
+		log.Printf("[handler] router reply to %s via %s: %q",
+			msg.FromUserID, h.router.GetCurrentAdapterName(msg.FromUserID), truncate(reply, 100))
 	} else {
-		log.Printf("[handler] WARNING: agent not ready for %s", msg.FromUserID)
-		reply = "[系统] AI 服务暂时不可用，请稍后重试。"
+		// 回退到默认 agent
+		ag := h.getDefaultAgent()
+		if ag != nil {
+			var err error
+			reply, err = ag.Chat(ctx, msg.FromUserID, text)
+			if err != nil {
+				reply = "抱歉，处理消息时出错了。"
+				log.Printf("[handler] agent error: %v", err)
+			}
+			log.Printf("[handler] agent reply to %s: %q", msg.FromUserID, truncate(reply, 100))
+		} else {
+			log.Printf("[handler] WARNING: agent not ready for %s", msg.FromUserID)
+			reply = "[系统] AI 服务暂时不可用，请稍后重试。"
+		}
 	}
 
 	if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {

@@ -1,9 +1,10 @@
 package database
 
 import (
+	"fmt"
+
 	"client-monitor/config"
 	"client-monitor/models"
-	"fmt"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -43,6 +44,7 @@ func Connect(cfg *config.Config) error {
 		&models.Reminder{},
 		&models.LLMConfig{},
 		&models.WeComConfig{},
+		&models.UserAIPreference{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

@@ -104,3 +104,16 @@ type WeComConfig struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
+
+// UserAIPreference 用户 AI 偏好设置
+type UserAIPreference struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	WecomUserID string    `gorm:"uniqueIndex;size:100" json:"wecom_user_id"` // 企业微信用户ID
+	AdapterName string    `gorm:"size:50" json:"adapter_name"`               // 当前使用的适配器
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// TableName 指定表名
+func (UserAIPreference) TableName() string {
+	return "user_ai_preferences"
+}

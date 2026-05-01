@@ -10,6 +10,7 @@ type AgentInfo struct {
 	Name    string // e.g. "claude-acp", "claude", "gpt-4o"
 	Type    string // e.g. "acp", "cli", "http"
 	Model   string // e.g. "sonnet", "gpt-4o-mini"
+	Status  string // e.g. "available", "unavailable"
 	Command string // binary path, e.g. "/usr/local/bin/claude-agent-acp"
 	PID     int    // subprocess PID (0 if not applicable, e.g. http agent)
 }
