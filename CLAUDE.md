@@ -1,12 +1,42 @@
-# WeCom AI Assistant 模块
+# FluxPanel
 
-## 概述
+## 项目概述
 
-企业微信 AI 助手模块，集成到 FluxPanel 中，共享现有的通知系统、用户体系和定时任务基础设施。
+FluxPanel 是一个综合性的监控与 AI 助手平台，集成了客户端监控、通知推送、iLink AI 助手等功能。系统采用前后端分离架构，后端使用 Go 语言开发，前端使用 React + TypeScript。
 
 ---
 
-## 核心功能
+## 核心模块
+
+### 1. 客户端监控面板
+- 实时数据上报与可视化展示
+- 客户端状态监控（心跳、在线状态）
+- 自定义排序与分组
+- WebSocket 实时推送
+
+### 2. 通知系统
+- 多渠道通知支持（iLink、飞书等）
+- 灵活的通知规则配置
+- 天气预报定时推送
+- 告警阈值管理
+
+### 3. iLink AI 助手
+- 普通聊天与上下文记忆
+- Todo 待办事项管理
+- 定时提醒功能
+- 可扩展技能系统
+
+---
+
+# iLink AI Assistant 模块
+
+## 概述
+
+iLink AI 助手模块，集成到 FluxPanel 中，通过 iLink 协议实现微信消息收发，共享现有的通知系统、用户体系和定时任务基础设施。
+
+---
+
+## AI 助手核心功能
 
 ### 1. 普通聊天
 - 接收用户消息，结合上下文和记忆，调用 LLM 生成回复
@@ -33,7 +63,7 @@
 - 创建一次性提醒
 - 查看提醒列表
 - 取消提醒
-- 到时间主动发送企业微信消息
+- 到时间主动发送微信消息
 - 示例：
   - "30分钟后提醒我开会"
   - "明天上午10点提醒我发邮件"
@@ -48,15 +78,15 @@
 ### 核心链路
 
 ```
-用户在企业微信发送消息
+用户在微信发送消息
         ↓
-    系统收到消息
+    iLink 收到消息
         ↓
    意图判断（Agent）
         ↓
    执行对应能力
         ↓
-  结果回复到企业微信
+  结果回复到微信
 ```
 
 ### Agent 决策逻辑
@@ -80,7 +110,7 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | uint | 主键 |
-| wecom_user_id | string | 企业微信用户ID |
+| wecom_user_id | string | 微信用户ID |
 | name | string | 用户名称 |
 | created_at | timestamp | 创建时间 |
 
@@ -137,7 +167,7 @@
 调用 LLM 生成回复
     ↓
 保存对话记录
-回复到企业微信
+回复到微信
 ```
 
 ### 工作流 2：保存记忆
@@ -211,7 +241,7 @@
     ↓
 查询 remind_at <= 当前时间 且 sent = false 的提醒
     ↓
-主动发送企业微信消息
+主动发送微信消息
     ↓
 标记 sent = true
 ```
@@ -220,11 +250,8 @@
 
 ## API 设计
 
-### 企业微信回调接口
-```
-POST /api/wecom/callback
-```
-接收企业微信推送的消息
+### iLink 消息接口
+通过 iLink 协议收发微信消息，无需企业微信应用配置
 
 ### AI 助手管理接口
 ```
@@ -242,18 +269,17 @@ GET  /api/assistant/reminders   # 获取提醒列表
 
 ### 复用现有模块
 
-1. **企业微信通知**
-   - 复用 `notify/wechat.go` 中的 `WechatWorkNotifier`
-   - 复用 `SendAppMessage(userID, title, content, event)` 发送消息
-   - 复用 `GetAccessToken()` 获取访问令牌
+1. **iLink 通知渠道**
+   - 复用 `notify/drivers/ilink.go` 中的 iLink 驱动
+   - 通过 iLink 协议发送微信消息
 
 2. **通知渠道配置**
    - 复用 `NotificationChannel` 模型
-   - 复用 `WechatWorkConfig` 配置结构
+   - 复用 iLink 登录状态管理
 
 3. **定时任务**
    - 复用 `notify/weather.go` 的调度模式
-   - 新增 `notify/reminder.go` 处理提醒调度
+   - 复用 `notify/reminder.go` 处理提醒调度
 
 4. **数据库**
    - 复用现有 GORM 和数据库连接
@@ -264,15 +290,19 @@ GET  /api/assistant/reminders   # 获取提醒列表
 ```
 backend/
 ├── handlers/
-│   ├── wecom.go          # 企业微信回调处理（新增）
-│   └── assistant.go      # AI 助手 API（新增）
+│   ├── wecom.go          # iLink 消息处理
+│   └── assistant.go      # AI 助手 API
 ├── models/
-│   └── assistant.go      # AI 助手数据模型（新增）
+│   └── assistant.go      # AI 助手数据模型
 ├── services/
-│   ├── agent.go          # 意图判断（新增）
-│   └── llm.go            # LLM 调用（新增）
+│   ├── agent.go          # 意图判断
+│   └── llm.go            # LLM 调用
 ├── notify/
-│   └── reminder.go       # 提醒调度（新增）
+│   └── reminder.go       # 提醒调度
+├── ilink/                # iLink 协议
+│   ├── client.go
+│   ├── auth.go
+│   └── monitor.go
 └── main.go               # 添加新路由
 ```
 
@@ -280,7 +310,7 @@ backend/
 
 ## 配置
 
-在环境变量或配置文件中添加：
+AI 助手通过管理界面配置，存储在数据库中：
 
 ```
 # LLM 配置
@@ -288,14 +318,9 @@ LLM_PROVIDER=openai
 LLM_API_KEY=your-api-key
 LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1  # 可选，用于其他兼容 API
-
-# 企业微信配置
-WECOM_CORP_ID=your-corp-id
-WECOM_AGENT_ID=your-agent-id
-WECOM_SECRET=your-secret
-WECOM_TOKEN=your-token          # 回调验证用
-WECOM_ENCODING_AES_KEY=your-key # 消息加解密用
 ```
+
+iLink 渠道通过扫码登录自动获取凭证，无需手动配置。
 
 ---
 
@@ -308,7 +333,7 @@ WECOM_ENCODING_AES_KEY=your-key # 消息加解密用
 - ✅ 简单 Todo
 - ✅ 一次性提醒
 - ✅ 最近对话上下文
-- ✅ 企业微信收发
+- ✅ iLink 微信收发
 
 ### 第一版不包含
 - ❌ 复杂权限系统
@@ -345,10 +370,10 @@ WECOM_ENCODING_AES_KEY=your-key # 消息加解密用
 3. LLM 服务封装（`services/llm.go`）
 4. Agent 意图判断（`services/agent.go`）
 
-### P1 - 企业微信集成
-1. 企业微信回调处理（`handlers/wecom.go`）
-2. 企业微信消息发送
-3. 消息加解密处理
+### P1 - iLink 集成
+1. iLink 消息监听（`ilink/monitor.go`）
+2. iLink 消息发送
+3. 登录状态管理
 
 ### P2 - 核心功能
 1. 聊天功能
@@ -412,3 +437,228 @@ action 规则：
 
 请根据上下文和记忆，友好地回复用户。如果用户记忆中有偏好，请遵守。
 ```
+
+---
+
+## 项目目录结构
+
+```
+FluxPanel/
+├── backend/                    # 后端服务
+│   ├── main.go                # 入口文件
+│   ├── config/                # 配置管理
+│   │   └── config.go
+│   ├── database/              # 数据库连接
+│   │   └── db.go
+│   ├── models/                # 数据模型
+│   │   ├── assistant.go       # AI 助手相关模型
+│   │   ├── notification.go    # 通知相关模型
+│   │   ├── alert.go           # 告警模型
+│   │   ├── weather.go         # 天气模型
+│   │   ├── event.go           # 事件模型
+│   │   ├── client_order.go    # 客户端排序
+│   │   ├── skill.go           # 技能模型
+│   │   └── wecom_credentials.go
+│   ├── handlers/              # HTTP 处理器
+│   │   ├── wecom.go           # iLink 消息处理
+│   │   ├── assistant.go       # AI 助手 API
+│   │   ├── notification.go    # 通知管理
+│   │   ├── alert.go           # 告警管理
+│   │   ├── weather.go         # 天气配置
+│   │   ├── skill.go           # 技能管理
+│   │   ├── websocket.go       # WebSocket 处理
+│   │   └── stats.go           # 统计接口
+│   ├── services/              # 业务服务
+│   │   ├── llm.go             # LLM 调用封装
+│   │   ├── agent.go           # 意图判断
+│   │   ├── chat_handler.go    # 聊天处理
+│   │   ├── memory_handler.go  # 记忆处理
+│   │   ├── reminder_handler.go # 提醒处理
+│   │   ├── intent_recognizer.go # 意图识别
+│   │   ├── time_parser.go     # 时间解析
+│   │   └── cache.go           # 缓存服务
+│   ├── agent/                 # Agent 适配器
+│   │   ├── agent.go           # Agent 核心
+│   │   ├── router.go          # 路由分发
+│   │   ├── claude_adapter.go  # Claude 适配器
+│   │   └── http_adapter.go    # HTTP 适配器
+│   ├── skill/                 # 技能系统
+│   │   ├── manager.go         # 技能管理
+│   │   ├── loader.go          # 技能加载
+│   │   ├── parser.go          # 技能解析
+│   │   ├── tool_registry.go   # 工具注册
+│   │   ├── prompt_builder.go  # Prompt 构建
+│   │   ├── types.go           # 类型定义
+│   │   └── router.go          # 技能路由
+│   ├── notify/                # 通知服务
+│   │   ├── service.go         # 通知服务核心
+│   │   ├── alert.go           # 告警服务
+│   │   ├── weather.go         # 天气推送
+│   │   ├── reminder.go        # 提醒调度
+│   │   ├── router.go          # 通知路由
+│   │   ├── drivers/           # 通知渠道驱动
+│   │   │   ├── driver.go
+│   │   │   ├── ilink.go       # iLink (微信)
+│   │   │   └── feishu.go      # 飞书
+│   │   └── types/
+│   │       └── message.go
+│   ├── ilink/                 # iLink 协议实现
+│   │   ├── client.go          # iLink 客户端
+│   │   ├── auth.go            # 认证登录
+│   │   ├── monitor.go         # 消息监听
+│   │   └── types.go           # 类型定义
+│   └── messaging/             # 消息处理
+│       ├── sender.go
+│       ├── handler.go
+│       └── markdown.go
+├── frontend/                   # 前端应用
+│   ├── src/
+│   │   ├── components/        # React 组件
+│   │   │   ├── Dashboard.tsx  # 监控面板
+│   │   │   ├── SystemSettings.tsx
+│   │   │   ├── NotificationSettings.tsx
+│   │   │   ├── WeatherSettings.tsx
+│   │   │   ├── AlertSettings.tsx
+│   │   │   ├── AssistantSettings.tsx
+│   │   │   ├── SkillSettings.tsx
+│   │   │   ├── settings/      # 设置子组件
+│   │   │   └── dashboard/     # 面板子组件
+│   │   ├── hooks/             # React Hooks
+│   │   │   ├── useWebSocket.ts
+│   │   │   └── useClientDrag.ts
+│   │   ├── services/          # 前端服务
+│   │   │   └── websocket.ts
+│   │   ├── types/             # TypeScript 类型
+│   │   └── lib/               # 工具函数
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── tailwind.config.js
+├── docker-compose.yml         # Docker 编排
+├── CLAUDE.md                  # 项目说明（本文件）
+└── README.md                  # 项目简介
+```
+
+---
+
+## 技术栈
+
+### 后端
+- **语言**: Go 1.21+
+- **Web 框架**: Gin
+- **ORM**: GORM
+- **数据库**: PostgreSQL
+- **实时通信**: Gorilla WebSocket
+
+### 前端
+- **框架**: React 18 + TypeScript
+- **构建工具**: Vite
+- **样式**: Tailwind CSS
+- **图表**: Recharts
+- **UI 组件**: Radix UI + shadcn/ui
+
+### 基础设施
+- **容器化**: Docker + Docker Compose
+- **反向代理**: Nginx（生产环境）
+
+---
+
+## 环境配置
+
+### 必需环境变量
+
+```bash
+# 数据库配置
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_NAME=fluxpanel
+
+# 服务配置
+SERVER_PORT=8080
+```
+
+### AI 助手配置
+
+```bash
+# LLM 配置（通过管理界面配置，存储在数据库）
+LLM_PROVIDER=openai
+LLM_API_KEY=your-api-key
+LLM_MODEL=gpt-4o-mini
+LLM_BASE_URL=https://api.openai.com/v1
+```
+
+---
+
+## 开发指南
+
+### 本地开发启动
+
+```bash
+# 启动后端
+cd backend
+go mod tidy
+go run main.go
+
+# 启动前端
+cd frontend
+npm install
+npm run dev
+```
+
+### 添加新技能
+
+1. 在 `backend/skill/skills/` 目录创建技能 YAML 文件
+2. 定义技能名称、描述、工具和 Prompt
+3. 通过管理界面上传或安装技能
+
+### 添加新通知渠道
+
+1. 在 `backend/notify/drivers/` 实现驱动接口
+2. 注册到通知服务
+3. 在管理界面配置渠道
+
+---
+
+## API 概览
+
+### 监控相关
+- `POST /api/report` - 客户端数据上报
+- `GET /api/summary` - 获取汇总统计
+- `GET /api/events` - 获取事件列表
+- `GET /ws` - WebSocket 连接
+
+### 通知管理
+- `GET/POST/PUT/DELETE /api/notifications/channels` - 通知渠道管理
+- `GET/POST/PUT/DELETE /api/notifications/rules` - 通知规则管理
+
+### AI 助手
+- `GET/PUT /api/assistant/llm` - LLM 配置管理
+- `GET/POST/PUT/DELETE /api/assistant/todos` - Todo 管理
+- `GET/DELETE /api/assistant/memories` - 记忆管理
+- `GET /api/assistant/reminders` - 提醒列表
+
+### iLink 登录
+- `GET /api/wecom/login/qrcode` - 获取登录二维码
+- `GET /api/wecom/login/status` - 获取登录状态
+- `DELETE /api/wecom/session` - 登出
+
+### 技能管理
+- `GET/POST/DELETE /api/skills` - 技能管理
+- `PUT /api/skills/:id/enable` - 启用/禁用技能
+
+---
+
+## 部署说明
+
+### Docker Compose 部署（推荐）
+
+```bash
+docker-compose up -d
+```
+
+### 生产环境注意事项
+
+1. 配置 HTTPS 反向代理
+2. 设置安全的数据库密码
+3. 定期备份数据库
