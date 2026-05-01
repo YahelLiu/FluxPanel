@@ -35,22 +35,53 @@ func GetLLMService() *LLMService {
 
 // ChatMessage 聊天消息
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string          `json:"role"`
+	Content   string          `json:"content,omitempty"`
+	ToolCalls []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+}
+
+// ToolCall 工具调用
+type ToolCall struct {
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
+	Function FunctionCall           `json:"function"`
+}
+
+// FunctionCall 函数调用
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolDefinition 工具定义
+type ToolDefinition struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+// ToolFunction 工具函数定义
+type ToolFunction struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
 }
 
 // ChatRequest 聊天请求
 type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
+	Model    string          `json:"model"`
+	Messages []ChatMessage   `json:"messages"`
+	Tools    []ToolDefinition `json:"tools,omitempty"`
 }
 
 // ChatResponse 聊天响应
 type ChatResponse struct {
 	Choices []struct {
 		Message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
+			Role      string     `json:"role"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -197,6 +228,110 @@ func (s *LLMService) ChatWithSystem(systemPrompt string, messages []ChatMessage)
 	allMessages = append(allMessages, messages...)
 
 	return s.Chat(allMessages)
+}
+
+// ChatWithTools 带工具的对话，返回可能包含工具调用的响应
+func (s *LLMService) ChatWithTools(systemPrompt string, messages []ChatMessage, tools []ToolDefinition) (*ChatResponse, error) {
+	config := s.GetConfig()
+	if config == nil {
+		return nil, fmt.Errorf("LLM 配置未设置")
+	}
+
+	var baseURL string
+	var model string
+
+	// 根据提供商设置默认值
+	switch config.Provider {
+	case "qwen":
+		baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+		if config.BaseURL != "" {
+			baseURL = config.BaseURL
+		}
+		model = config.Model
+		if model == "" {
+			model = "qwen-plus"
+		}
+	case "openai":
+		baseURL = "https://api.openai.com/v1"
+		if config.BaseURL != "" {
+			baseURL = config.BaseURL
+		}
+		model = config.Model
+		if model == "" {
+			model = "gpt-4o-mini"
+		}
+	default:
+		if config.BaseURL == "" {
+			return nil, fmt.Errorf("自定义提供商需要设置 BaseURL")
+		}
+		baseURL = config.BaseURL
+		model = config.Model
+	}
+
+	// 构建请求
+	allMessages := make([]ChatMessage, 0, len(messages)+1)
+	if systemPrompt != "" {
+		allMessages = append(allMessages, ChatMessage{
+			Role:    "system",
+			Content: systemPrompt,
+		})
+	}
+	allMessages = append(allMessages, messages...)
+
+	reqBody := ChatRequest{
+		Model:    model,
+		Messages: allMessages,
+		Tools:    tools,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/chat/completions", baseURL)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", config.APIKey))
+
+	// 发送请求
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	var chatResp ChatResponse
+	if err := json.Unmarshal(body, &chatResp); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w, body: %s", err, string(body))
+	}
+
+	// 检查错误
+	if chatResp.Error.Message != "" {
+		return nil, fmt.Errorf("API 错误: %s", chatResp.Error.Message)
+	}
+
+	// 检查响应
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("API 返回空响应")
+	}
+
+	log.Printf("LLM 调用成功, tokens: prompt=%d, completion=%d, total=%d",
+		chatResp.Usage.PromptTokens,
+		chatResp.Usage.CompletionTokens,
+		chatResp.Usage.TotalTokens,
+	)
+
+	return &chatResp, nil
 }
 
 // StreamChatRequest 流式请求结构

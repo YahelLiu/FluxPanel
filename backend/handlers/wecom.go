@@ -110,32 +110,10 @@ func handleWeComChatStream(c *gin.Context, userID uint, message, wecomUserID str
 		return
 	}
 
-	// 先分析意图（这部分很快，不需要流式）
-	result, err := agent.AnalyzeIntent(message)
-	if err != nil {
-		c.SSEvent("error", gin.H{"error": err.Error()})
-		flusher.Flush()
-		return
-	}
-
-	// 非聊天意图，直接处理（记忆、提醒等）
-	if result.Intent != models.IntentChat {
-		response, err := agent.ProcessMessage(userID, message)
-		if err != nil {
-			c.SSEvent("error", gin.H{"error": err.Error()})
-			flusher.Flush()
-			return
-		}
-		// 直接发送完整响应，一次性
-		c.SSEvent("done", gin.H{"content": response})
-		flusher.Flush()
-		return
-	}
-
-	// 聊天意图，使用流式响应
+	// 使用流式响应
 	var fullResponse strings.Builder
 
-	err = agent.StreamChat(userID, message, func(chunk string) error {
+	err := agent.StreamChat(userID, message, func(chunk string) error {
 		fullResponse.WriteString(chunk)
 		c.SSEvent("message", gin.H{"content": chunk})
 		flusher.Flush()
@@ -148,7 +126,7 @@ func handleWeComChatStream(c *gin.Context, userID uint, message, wecomUserID str
 		return
 	}
 
-	// 发送结束标记（不包含内容，只是标记结束）
+	// 发送结束标记
 	c.SSEvent("done", gin.H{})
 	flusher.Flush()
 

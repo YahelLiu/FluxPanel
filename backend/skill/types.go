@@ -110,3 +110,4 @@ type ToolResult struct {
 	Result     interface{} `json:"result"`
 	Error      string      `json:"error,omitempty"`
 }
+

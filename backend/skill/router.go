@@ -64,6 +64,10 @@ func (r *Router) SelectActive(eligible []*Skill, message string) []*Skill {
 		// 检查触发关键词
 		for _, trigger := range skill.Triggers {
 			if strings.Contains(messageLower, strings.ToLower(trigger)) {
+				// 触发懒加载内容
+				if !skill.contentLoaded && skill.Path != "" && r.manager != nil {
+					r.manager.LoadSkillContent(skill)
+				}
 				active = append(active, skill)
 				log.Printf("[skill] 匹配 skill %s (trigger: %s)", skill.ID, trigger)
 				break

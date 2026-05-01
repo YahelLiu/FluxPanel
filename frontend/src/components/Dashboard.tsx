@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { Activity, Wifi, WifiOff, Cpu, HardDrive, Monitor, MapPin, Clock, Trash2, GripVertical, Bell, CloudSun, Send } from 'lucide-react'
+import { Activity, Wifi, WifiOff, Cpu, HardDrive, Monitor, MapPin, Clock, Trash2, GripVertical, Bell, CloudSun, Send, Star, Package, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { NotificationSettings } from '@/components/NotificationSettings'
+import { SkillSettings } from '@/components/SkillSettings'
+
+interface Channel {
+  id: number
+  name: string
+  type: string
+}
 
 interface ClientOrder {
   client_id: string
   sort_order: number
   weather_enabled: boolean
   channel_id: number
+  channel_ids: number[]
+  is_primary: boolean
+  hidden: boolean
 }
 
 interface Disk {
@@ -70,10 +80,13 @@ interface WSEvent {
 export function Dashboard() {
   const [clients, setClients] = useState<Map<string, ClientData>>(new Map())
   const [clientOrders, setClientOrders] = useState<Map<string, ClientOrder>>(new Map())
+  const [channels, setChannels] = useState<Channel[]>([])
   const [loading, setLoading] = useState(true)
   const [draggedClient, setDraggedClient] = useState<string | null>(null)
   const [showNotificationSettings, setShowNotificationSettings] = useState(false)
+  const [showSkillSettings, setShowSkillSettings] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [expandedChannels, setExpandedChannels] = useState<Set<string>>(new Set())
 
   // WebSocket connection
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -96,13 +109,25 @@ export function Dashboard() {
     }
   }
 
+  // Fetch channels
+  const fetchChannels = async () => {
+    try {
+      const res = await fetch('/api/notifications/channels')
+      const data = await res.json()
+      setChannels(data || [])
+    } catch (error) {
+      console.error('Failed to fetch channels:', error)
+    }
+  }
+
   // Fetch initial client data
   useEffect(() => {
     const fetchClients = async () => {
       try {
         const [clientsRes] = await Promise.all([
           fetch('/api/clients/latest'),
-          fetchClientOrders()
+          fetchClientOrders(),
+          fetchChannels()
         ])
         const json = await clientsRes.json()
         const clientMap = new Map<string, ClientData>()
@@ -218,7 +243,7 @@ export function Dashboard() {
       setClientOrders(prev => {
         const newMap = new Map(prev)
         orders.forEach(o => {
-          const existing = newMap.get(o.client_id) || { client_id: o.client_id, sort_order: 0, weather_enabled: false, channel_id: 0 }
+          const existing = newMap.get(o.client_id) || { client_id: o.client_id, sort_order: 0, weather_enabled: false, channel_id: 0, channel_ids: [], is_primary: false, hidden: false }
           newMap.set(o.client_id, { ...existing, sort_order: o.sort_order })
         })
         return newMap
@@ -253,12 +278,78 @@ export function Dashboard() {
       // Update local state
       setClientOrders(prev => {
         const newMap = new Map(prev)
-        const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0 }
+        const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0, channel_ids: [], is_primary: false, hidden: false }
         newMap.set(clientId, { ...existing, weather_enabled: weatherEnabled })
         return newMap
       })
     } catch (error) {
       console.error('Failed to update weather settings:', error)
+    }
+  }
+
+  // Set primary client
+  const setPrimaryClient = async (clientId: string) => {
+    try {
+      await fetch(`/api/clients/${encodeURIComponent(clientId)}/primary`, {
+        method: 'PUT',
+      })
+
+      // 更新本地状态
+      setClientOrders(prev => {
+        const newMap = new Map(prev)
+        // 清除所有主标记
+        for (const [id, order] of newMap) {
+          newMap.set(id, { ...order, is_primary: false, hidden: false })
+        }
+        // 设置新的主客户端
+        const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0, channel_ids: [], is_primary: false, hidden: false }
+        newMap.set(clientId, { ...existing, is_primary: true })
+        return newMap
+      })
+    } catch (error) {
+      console.error('Failed to set primary client:', error)
+    }
+  }
+
+  // Update client channels
+  const updateClientChannels = async (clientId: string, channelIds: number[]) => {
+    try {
+      await fetch(`/api/clients/${encodeURIComponent(clientId)}/channels`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel_ids: channelIds })
+      })
+
+      // Update local state
+      setClientOrders(prev => {
+        const newMap = new Map(prev)
+        const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0, channel_ids: [], is_primary: false, hidden: false }
+        newMap.set(clientId, { ...existing, channel_ids: channelIds })
+        return newMap
+      })
+    } catch (error) {
+      console.error('Failed to update client channels:', error)
+    }
+  }
+
+  // Toggle client hidden status
+  const toggleClientHidden = async (clientId: string, hidden: boolean) => {
+    try {
+      await fetch(`/api/clients/${encodeURIComponent(clientId)}/hidden`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hidden })
+      })
+
+      // Update local state
+      setClientOrders(prev => {
+        const newMap = new Map(prev)
+        const existing = newMap.get(clientId) || { client_id: clientId, sort_order: 999999, weather_enabled: false, channel_id: 0, channel_ids: [], is_primary: false, hidden: false }
+        newMap.set(clientId, { ...existing, hidden })
+        return newMap
+      })
+    } catch (error) {
+      console.error('Failed to toggle client hidden:', error)
     }
   }
 
@@ -332,6 +423,13 @@ export function Dashboard() {
             </div>
             <div className="flex items-center gap-4">
               <button
+                onClick={() => setShowSkillSettings(true)}
+                className="flex items-center gap-1 px-3 py-1.5 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 text-sm"
+              >
+                <Package className="h-4 w-4" />
+                技能管理
+              </button>
+              <button
                 onClick={() => setShowNotificationSettings(true)}
                 className="flex items-center gap-1 px-3 py-1.5 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 text-sm"
               >
@@ -370,7 +468,7 @@ export function Dashboard() {
           </div>
         ) : (
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {getSortedClients().map((client) => (
+            {getSortedClients().filter(client => !clientOrders.get(client.client_id)?.hidden).map((client) => (
               <Card
                 key={client.client_id}
                 className={`${isOnline(client.last_seen) ? '' : 'opacity-60'} ${draggedClient === client.client_id ? 'ring-2 ring-primary' : ''}`}
@@ -392,6 +490,21 @@ export function Dashboard() {
                       ) : (
                         <span className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full">离线</span>
                       )}
+                      <button
+                        onClick={() => toggleClientHidden(client.client_id, !clientOrders.get(client.client_id)?.hidden)}
+                        className={`p-1 rounded transition-colors ${
+                          clientOrders.get(client.client_id)?.hidden
+                            ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                        }`}
+                        title={clientOrders.get(client.client_id)?.hidden ? '显示客户端' : '隐藏客户端'}
+                      >
+                        {clientOrders.get(client.client_id)?.hidden ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
                       <button
                         onClick={() => deleteClient(client.client_id)}
                         className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
@@ -422,27 +535,92 @@ export function Dashboard() {
                   )}
 
                   {/* Weather Settings */}
-                  <div className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-sm">
-                    <CloudSun className="h-4 w-4 text-blue-500" />
-                    <label className="flex items-center gap-1 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={clientOrders.get(client.client_id)?.weather_enabled || false}
-                        onChange={(e) => {
-                          updateClientWeather(client.client_id, e.target.checked)
-                        }}
-                        className="rounded"
-                      />
-                      <span className="text-xs">天气推送</span>
-                    </label>
-                    {clientOrders.get(client.client_id)?.weather_enabled && client.data.location && (
+                  <div className="space-y-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-sm">
+                    <div className="flex items-center gap-2">
+                      <CloudSun className="h-4 w-4 text-blue-500" />
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={clientOrders.get(client.client_id)?.weather_enabled || false}
+                          onChange={(e) => {
+                            updateClientWeather(client.client_id, e.target.checked)
+                          }}
+                          className="rounded"
+                        />
+                        <span className="text-xs">天气推送</span>
+                      </label>
+                      {clientOrders.get(client.client_id)?.weather_enabled && client.data.location && (
+                        <button
+                          onClick={() => sendWeatherToClient(client.client_id)}
+                          className="p-1 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
+                          title="立即发送天气通知"
+                        >
+                          <Send className="h-4 w-4" />
+                        </button>
+                      )}
+                      {/* 主客户端标记 */}
                       <button
-                        onClick={() => sendWeatherToClient(client.client_id)}
-                        className="p-1 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
-                        title="立即发送天气通知"
+                        onClick={() => setPrimaryClient(client.client_id)}
+                        className={`ml-auto p-1 rounded transition-colors ${
+                          clientOrders.get(client.client_id)?.is_primary
+                            ? 'text-yellow-500 bg-yellow-50 dark:bg-yellow-900/30'
+                            : 'text-gray-400 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-900/30'
+                        }`}
+                        title={clientOrders.get(client.client_id)?.is_primary ? '主客户端（天气查询优先使用此位置）' : '设为主客户端'}
                       >
-                        <Send className="h-4 w-4" />
+                        <Star className="h-4 w-4" />
                       </button>
+                    </div>
+                    {/* 渠道选择 */}
+                    {channels.length > 0 && (
+                      <div className="border-t border-gray-200 dark:border-gray-700 pt-2">
+                        <button
+                          onClick={() => {
+                            setExpandedChannels(prev => {
+                              const newSet = new Set(prev)
+                              if (newSet.has(client.client_id)) {
+                                newSet.delete(client.client_id)
+                              } else {
+                                newSet.add(client.client_id)
+                              }
+                              return newSet
+                            })
+                          }}
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          <ChevronDown className={`h-3 w-3 transition-transform ${expandedChannels.has(client.client_id) ? 'rotate-180' : ''}`} />
+                          通知渠道 ({(clientOrders.get(client.client_id)?.channel_ids || []).length})
+                        </button>
+                        {expandedChannels.has(client.client_id) && (
+                          <div className="mt-2 space-y-1">
+                            {channels.map(channel => {
+                              const selectedChannels = clientOrders.get(client.client_id)?.channel_ids || []
+                              const isSelected = selectedChannels.includes(channel.id)
+                              return (
+                                <label key={channel.id} className="flex items-center gap-2 cursor-pointer text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(e) => {
+                                      const current = selectedChannels
+                                      let newChannels: number[]
+                                      if (e.target.checked) {
+                                        newChannels = [...current, channel.id]
+                                      } else {
+                                        newChannels = current.filter(id => id !== channel.id)
+                                      }
+                                      updateClientChannels(client.client_id, newChannels)
+                                    }}
+                                    className="rounded"
+                                  />
+                                  <span>{channel.name}</span>
+                                  <span className="text-muted-foreground">({channel.type})</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -634,6 +812,11 @@ export function Dashboard() {
       {/* Notification Settings Modal */}
       {showNotificationSettings && (
         <NotificationSettings onClose={() => setShowNotificationSettings(false)} />
+      )}
+
+      {/* Skill Settings Modal */}
+      {showSkillSettings && (
+        <SkillSettings onClose={() => setShowSkillSettings(false)} />
       )}
     </div>
   )

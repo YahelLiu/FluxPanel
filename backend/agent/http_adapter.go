@@ -12,7 +12,7 @@ import (
 
 // HTTPAgent HTTP API 适配器（通义千问/OpenAI等）
 type HTTPAgent struct {
-	agentService *services.AgentService
+	chatHandler  *services.ChatHandler
 	model        string
 	skillManager *skill.Manager
 	skillRouter  *skill.Router
@@ -30,8 +30,8 @@ func NewHTTPAgent() *HTTPAgent {
 	}
 
 	return &HTTPAgent{
-		agentService: services.GetAgentService(),
-		model:        model,
+		chatHandler: services.NewChatHandler(),
+		model:       model,
 	}
 }
 
@@ -55,19 +55,24 @@ func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, message str
 	}
 
 	// 2. 路由 skills (如果有)
+	var activeSkills []*skill.Skill
 	if a.skillRouter != nil {
-		activeSkills, err := a.skillRouter.Route(conversationID, message)
+		var err error
+		activeSkills, err = a.skillRouter.Route(conversationID, message)
 		if err != nil {
 			log.Printf("[http_agent] skill routing error: %v", err)
 		}
 		if len(activeSkills) > 0 {
-			log.Printf("[http_agent] activated skills: %v", activeSkills)
-			// TODO: 将 skills 注入到消息处理中
+			skillNames := make([]string, len(activeSkills))
+			for i, s := range activeSkills {
+				skillNames[i] = s.Name
+			}
+			log.Printf("[http_agent] activated skills: %v", skillNames)
 		}
 	}
 
-	// 3. 调用现有的 AgentService
-	return a.agentService.ProcessMessage(user.ID, message)
+	// 3. 直接调用 ChatHandler（统一使用 HandleWithSkills）
+	return a.chatHandler.HandleWithSkills(user.ID, message, activeSkills)
 }
 
 // ResetSession 清除对话历史
@@ -91,7 +96,7 @@ func (a *HTTPAgent) Info() AgentInfo {
 	}
 
 	status := "available"
-	if a.agentService == nil {
+	if a.chatHandler == nil {
 		status = "unavailable"
 	}
 

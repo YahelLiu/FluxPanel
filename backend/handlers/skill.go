@@ -133,6 +133,22 @@ func UploadSkill(c *gin.Context) {
 		return
 	}
 
+	// 先解析 SKILL.md 获取 skill 名称
+	parser := skill.NewParser()
+	skillMeta, err := parser.ParseMetadataOnly(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("failed to parse SKILL.md: %v", err)})
+		return
+	}
+
+	// 复制到持久化的 skills 目录
+	skillsDir := "/app/skills"
+	targetDir := filepath.Join(skillsDir, skillMeta.ID)
+	if err := copyDir(skillDir, targetDir); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to copy skill: %v", err)})
+		return
+	}
+
 	// 安装 skill
 	manager := skill.GetManager()
 	if manager == nil {
@@ -140,7 +156,7 @@ func UploadSkill(c *gin.Context) {
 		return
 	}
 
-	s, err := manager.Import(skillDir)
+	s, err := manager.Import(targetDir)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("failed to import skill: %v", err)})
 		return
@@ -198,6 +214,22 @@ func InstallSkillFromURL(c *gin.Context) {
 		return
 	}
 
+	// 先解析 SKILL.md 获取 skill 名称
+	parser := skill.NewParser()
+	skillMeta, err := parser.ParseMetadataOnly(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("failed to parse SKILL.md: %v", err)})
+		return
+	}
+
+	// 复制到持久化的 skills 目录
+	skillsDir := "/app/skills"
+	targetDir := filepath.Join(skillsDir, skillMeta.ID)
+	if err := copyDir(skillDir, targetDir); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to copy skill: %v", err)})
+		return
+	}
+
 	// 安装 skill
 	manager := skill.GetManager()
 	if manager == nil {
@@ -205,7 +237,7 @@ func InstallSkillFromURL(c *gin.Context) {
 		return
 	}
 
-	s, err := manager.Import(skillDir)
+	s, err := manager.Import(targetDir)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("failed to import skill: %v", err)})
 		return
@@ -463,5 +495,56 @@ func downloadFile(url, filepath string) error {
 	defer out.Close()
 
 	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+// copyDir 复制目录
+func copyDir(src, dst string) error {
+	// 创建目标目录
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	// 遍历源目录
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			// 递归复制子目录
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			// 复制文件
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// copyFile 复制文件
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
 	return err
 }

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"client-monitor/database"
@@ -23,6 +24,9 @@ type Manager struct {
 
 // 全局 Manager 实例
 var globalManager *Manager
+
+// content 加载锁
+var skillMu sync.Mutex
 
 // GetManager 获取全局 Manager
 func GetManager() *Manager {
@@ -55,6 +59,18 @@ func (m *Manager) loadAllFromDB() {
 
 	for _, dbSkill := range dbSkills {
 		skill := m.convertToSkill(dbSkill)
+
+		// 如果没有设置 AllowedTools，根据名称自动设置
+		if len(skill.AllowedTools) == 0 {
+			skill.AllowedTools = m.getDefaultTools(skill)
+			// 更新数据库
+			toolsJSON, _ := json.Marshal(skill.AllowedTools)
+			database.DB.Model(&models.Skill{}).
+				Where("skill_id = ?", skill.ID).
+				Update("allowed_tools", string(toolsJSON))
+			log.Printf("[skill] 自动设置 %s 允许工具: %v", skill.ID, skill.AllowedTools)
+		}
+
 		m.cache.Store(skill.ID, skill)
 	}
 
@@ -111,6 +127,11 @@ func (m *Manager) Import(path string) (*Skill, error) {
 	m.parser.LoadReferences(skill)
 	m.parser.LoadTemplates(skill)
 
+	// 根据名称设置默认允许的工具
+	if len(skill.AllowedTools) == 0 {
+		skill.AllowedTools = m.getDefaultTools(skill)
+	}
+
 	// 保存到数据库
 	dbSkill := m.convertToDBModel(skill)
 	dbSkill.Source = "uploaded"
@@ -133,8 +154,51 @@ func (m *Manager) Import(path string) (*Skill, error) {
 	// 更新缓存
 	m.cache.Store(skill.ID, skill)
 
-	log.Printf("[skill] 导入 skill: %s", skill.ID)
+	log.Printf("[skill] 导入 skill: %s (tools: %v)", skill.ID, skill.AllowedTools)
 	return skill, nil
+}
+
+// getDefaultTools 根据技能名称返回默认允许的工具
+func (m *Manager) getDefaultTools(skill *Skill) []string {
+	switch skill.ID {
+	case "reminder":
+		return []string{"reminder_create", "reminder_list", "reminder_cancel"}
+	case "memory":
+		return []string{"memory_save", "memory_list", "memory_delete"}
+	case "translator":
+		return []string{"translator"}
+	case "weather":
+		return []string{"weather_get", "weather_send"}
+	default:
+		// 检查类型
+		if skill.Type == SkillTypeTool {
+			// 尝试匹配名称
+			name := skill.ID
+			if containsAny(name, "reminder", "提醒") {
+				return []string{"reminder_create", "reminder_list", "reminder_cancel"}
+			}
+			if containsAny(name, "memory", "记忆") {
+				return []string{"memory_save", "memory_list", "memory_delete"}
+			}
+			if containsAny(name, "translat", "翻译") {
+				return []string{"translator"}
+			}
+			if containsAny(name, "weather", "天气") {
+				return []string{"weather_get", "weather_send"}
+			}
+		}
+		return []string{}
+	}
+}
+
+// containsAny 检查字符串是否包含任意一个子串
+func containsAny(s string, substrs ...string) bool {
+	for _, substr := range substrs {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 // convertToDBModel 将 Skill 转换为数据库模型
@@ -197,7 +261,26 @@ func (m *Manager) Get(skillID string) (*Skill, error) {
 	return skill, nil
 }
 
-// loadSkillContent 加载 skill 内容
+// LoadSkillContent 加载 skill 内容（懒加载）
+func (m *Manager) LoadSkillContent(skill *Skill) {
+	skillMu.Lock()
+	defer skillMu.Unlock()
+
+	if skill.contentLoaded {
+		return
+	}
+
+	skillMdPath := filepath.Join(skill.Path, "SKILL.md")
+	if fullSkill, err := m.parser.ParseFile(skillMdPath); err == nil {
+		skill.content = fullSkill.content
+		skill.contentLoaded = true
+		m.parser.LoadReferences(skill)
+		m.parser.LoadTemplates(skill)
+		log.Printf("[skill] 懒加载 skill 内容: %s", skill.ID)
+	}
+}
+
+// loadSkillContent 内部方法，不加锁版本
 func (m *Manager) loadSkillContent(skill *Skill) {
 	skillMdPath := filepath.Join(skill.Path, "SKILL.md")
 	if fullSkill, err := m.parser.ParseFile(skillMdPath); err == nil {
@@ -288,10 +371,15 @@ func (m *Manager) GetUserEnabledSkills(userID string) ([]*Skill, error) {
 func (m *Manager) ScanDirectory(dir string) ([]*Skill, error) {
 	var skills []*Skill
 
+	log.Printf("[skill] 扫描目录: %s", dir)
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		log.Printf("[skill] 读取目录失败: %v", err)
 		return nil, err
 	}
+
+	log.Printf("[skill] 找到 %d 个条目", len(entries))
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -308,9 +396,12 @@ func (m *Manager) ScanDirectory(dir string) ([]*Skill, error) {
 				continue
 			}
 			skills = append(skills, skill)
+		} else {
+			log.Printf("[skill] 跳过 %s: 无 SKILL.md", skillPath)
 		}
 	}
 
+	log.Printf("[skill] 扫描完成，导入 %d 个 skills", len(skills))
 	return skills, nil
 }
 
