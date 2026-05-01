@@ -1,163 +1,17 @@
 package notify
 
 import (
-	"context"
 	"log"
 	"sync"
 
-	"client-monitor/messaging"
+	"client-monitor/database"
 	"client-monitor/models"
 	"client-monitor/notify/drivers"
 	"client-monitor/notify/types"
-	"client-monitor/wecom"
 )
 
-// Dispatcher 通知分发器（保留兼容旧接口）
-type Dispatcher struct {
-	factory *NotifierFactory
-	mu      sync.RWMutex
-}
-
-var dispatcher *Dispatcher
-var dispatcherOnce sync.Once
-
-// GetDispatcher 获取分发器单例
-func GetDispatcher() *Dispatcher {
-	dispatcherOnce.Do(func() {
-		dispatcher = &Dispatcher{
-			factory: GetFactory(),
-		}
-	})
-	return dispatcher
-}
-
-// Dispatch 分发通知
-func (d *Dispatcher) Dispatch(channelType models.NotificationType, config interface{}, title, content string, event models.Event) error {
-	switch channelType {
-	case models.NotificationTypeFeishu:
-		if cfg, ok := config.(models.FeishuConfig); ok {
-			return d.dispatchFeishu(cfg, title, content, event)
-		}
-	case models.NotificationTypeWechatWork:
-		if cfg, ok := config.(models.WechatWorkConfig); ok {
-			return d.dispatchWechatWork(cfg, title, content, event)
-		}
-	case models.NotificationTypeWechatILink:
-		if cfg, ok := config.(models.WechatILinkConfig); ok {
-			return d.dispatchWechatILink(cfg, title, content, event)
-		}
-	}
-	return nil
-}
-
-func (d *Dispatcher) dispatchFeishu(config models.FeishuConfig, title, content string, event models.Event) error {
-	notifier := d.factory.GetFeishu(config)
-
-	if config.WebhookURL != "" {
-		return notifier.Send(title, content, event)
-	}
-	if len(config.UserIDs) > 0 {
-		return notifier.SendToAllUsers(title, content, event)
-	}
-
-	return nil
-}
-
-func (d *Dispatcher) dispatchWechatWork(config models.WechatWorkConfig, title, content string, event models.Event) error {
-	notifier := d.factory.GetWechatWork(config)
-
-	if config.WebhookURL != "" {
-		return notifier.Send(title, content, event)
-	}
-	if len(config.UserIDs) > 0 {
-		return notifier.SendToAllUsers(title, content, event)
-	}
-
-	return nil
-}
-
-func (d *Dispatcher) dispatchWechatILink(config models.WechatILinkConfig, title, content string, event models.Event) error {
-	if !config.LoggedIn || config.BotToken == "" {
-		log.Printf("[notify] WechatILink not logged in")
-		return nil
-	}
-
-	client := wecom.GetClient()
-	if client == nil {
-		log.Printf("[notify] WechatILink client not available")
-		return nil
-	}
-
-	// 如果没有配置 UserIDs，使用当前登录的 iLink 用户 ID
-	userIDs := config.UserIDs
-	if len(userIDs) == 0 && config.ILinkUserID != "" {
-		userIDs = []string{config.ILinkUserID}
-	}
-
-	if len(userIDs) == 0 {
-		log.Printf("[notify] WechatILink no target users configured")
-		return nil
-	}
-
-	// 构建消息内容（包含标题）
-	fullContent := title + "\n\n" + content
-
-	// 发送给配置的用户列表
-	for _, userID := range userIDs {
-		if err := messaging.SendTextReply(context.Background(), client, userID, fullContent, "", ""); err != nil {
-			log.Printf("[notify] WechatILink send to %s failed: %v", userID, err)
-		} else {
-			log.Printf("[notify] WechatILink sent to %s successfully", userID)
-		}
-	}
-
-	return nil
-}
-
-// Service 通知服务（旧接口，保留兼容）
-type Service struct {
-	dispatcher *Dispatcher
-}
-
-var service *Service
-var serviceOnce sync.Once
-
-// GetService 获取服务单例
-func GetService() *Service {
-	serviceOnce.Do(func() {
-		service = &Service{
-			dispatcher: GetDispatcher(),
-		}
-	})
-	return service
-}
-
-// SendNotification 发送通知（兼容旧接口）
-func (s *Service) SendNotification(channel *models.NotificationChannel, event models.Event) error {
-	log.Printf("SendNotification: client=%s type=%s status=%s", event.ClientID, event.EventType, event.Status)
-	return nil
-}
-
-// SendAlertNotification 发送告警通知
-func (s *Service) SendAlertNotification(channel *models.NotificationChannel, title, content string, event models.Event) error {
-	switch channel.Type {
-	case models.NotificationTypeFeishu:
-		return s.dispatcher.dispatchFeishu(channel.Feishu, title, content, event)
-	case models.NotificationTypeWechatWork:
-		return s.dispatcher.dispatchWechatWork(channel.WechatWork, title, content, event)
-	case models.NotificationTypeWechatILink:
-		return s.dispatcher.dispatchWechatILink(channel.WechatILink, title, content, event)
-	}
-	return nil
-}
-
-// ClearCache 清除缓存
-func (s *Service) ClearCache() {
-	s.dispatcher.factory.ClearCache()
-}
-
 // ============================================
-// 新的统一通知服务（基于适配器架构）
+// 统一通知服务（基于适配器架构）
 // ============================================
 
 // NotifyService 通知服务（对外暴露的统一入口）
@@ -233,4 +87,53 @@ func (s *NotifyService) SendChat(content string) error {
 // GetAvailableDrivers 获取可用驱动列表
 func (s *NotifyService) GetAvailableDrivers() []drivers.DriverInfo {
 	return s.router.GetAvailableDrivers()
+}
+
+// SendWeatherToChannels 发送天气通知到指定渠道
+func (s *NotifyService) SendWeatherToChannels(location, content string, channelIDs []int) []error {
+	log.Printf("[notify] SendWeatherToChannels called, channelIDs: %v", channelIDs)
+
+	msg := types.NewNotifyMessage(types.MessageTypeWeather, "天气预报", content).
+		WithSource(location, location)
+
+	var errs []error
+
+	for _, channelID := range channelIDs {
+		// 查询渠道信息
+		var channel models.NotificationChannel
+		if err := database.DB.First(&channel, channelID).Error; err != nil {
+			log.Printf("[notify] Channel %d not found: %v", channelID, err)
+			errs = append(errs, err)
+			continue
+		}
+
+		log.Printf("[notify] Channel %d: type=%s, enabled=%v", channelID, channel.Type, channel.Enabled)
+
+		if !channel.Enabled {
+			log.Printf("[notify] Channel %d is disabled, skipping", channelID)
+			continue
+		}
+
+		// 根据渠道类型确定驱动
+		var driverName string
+		switch channel.Type {
+		case models.NotificationTypeWechatILink:
+			driverName = "ilink"
+		case models.NotificationTypeFeishu:
+			driverName = "feishu"
+		default:
+			log.Printf("[notify] Channel %d has unknown type: %s", channelID, channel.Type)
+			continue
+		}
+
+		log.Printf("[notify] Sending to driver: %s", driverName)
+		if err := s.SendTo(driverName, msg); err != nil {
+			log.Printf("[notify] Send to %s failed: %v", driverName, err)
+			errs = append(errs, err)
+		} else {
+			log.Printf("[notify] Send to %s success", driverName)
+		}
+	}
+
+	return errs
 }

@@ -2,9 +2,6 @@ package drivers
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,17 +34,22 @@ func (d *FeishuDriver) Name() string {
 
 // Send 发送消息
 func (d *FeishuDriver) Send(msg *types.NotifyMessage) error {
+	log.Printf("[feishu] Send called, checking availability...")
+
 	if !d.IsAvailable() {
+		log.Printf("[feishu] Driver not available")
 		return ErrNotAvailable
 	}
 
 	// 获取飞书配置
 	var channel models.NotificationChannel
 	if err := database.DB.Where("type = ? AND enabled = ?", models.NotificationTypeFeishu, true).First(&channel).Error; err != nil {
+		log.Printf("[feishu] Channel query failed: %v", err)
 		return fmt.Errorf("feishu channel not configured: %w", err)
 	}
 
 	config := channel.Feishu
+	log.Printf("[feishu] WebhookURL: %s", config.WebhookURL)
 	if config.WebhookURL == "" {
 		return fmt.Errorf("feishu webhook URL is empty")
 	}
@@ -60,9 +62,12 @@ func (d *FeishuDriver) Send(msg *types.NotifyMessage) error {
 func (d *FeishuDriver) IsAvailable() bool {
 	var channel models.NotificationChannel
 	if err := database.DB.Where("type = ? AND enabled = ?", models.NotificationTypeFeishu, true).First(&channel).Error; err != nil {
+		log.Printf("[feishu] IsAvailable: no enabled feishu channel found: %v", err)
 		return false
 	}
-	return channel.Feishu.WebhookURL != ""
+	available := channel.Feishu.WebhookURL != ""
+	log.Printf("[feishu] IsAvailable: %v (WebhookURL length: %d)", available, len(channel.Feishu.WebhookURL))
+	return available
 }
 
 // SupportedTypes 返回支持的消息类型（空表示支持所有）
@@ -185,46 +190,4 @@ func (d *FeishuDriver) getIcon(msgType types.MessageType) string {
 	default:
 		return ""
 	}
-}
-
-// SendWithSign 发送带签名的消息（可选，用于验证消息来源）
-func (d *FeishuDriver) SendWithSign(config *models.FeishuConfig, msg *types.NotifyMessage, secret string) error {
-	timestamp := time.Now().Unix()
-	stringToSign := fmt.Sprintf("%d\n%s", timestamp, secret)
-	h := hmac.New(sha256.New, []byte(stringToSign))
-	h.Write([]byte(""))
-	signature := base64.StdEncoding.EncodeToString(h.Sum(nil))
-
-	card := d.buildCard(msg)
-	message := map[string]interface{}{
-		"msg_type":  "interactive",
-		"card":      card,
-		"timestamp": timestamp,
-		"sign":      signature,
-	}
-
-	body, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("marshal message failed: %w", err)
-	}
-
-	resp, err := d.client.Post(config.WebhookURL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("send request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	var result struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	if err := json.Unmarshal(respBody, &result); err == nil {
-		if result.Code != 0 {
-			return fmt.Errorf("feishu api error: code=%d, msg=%s", result.Code, result.Msg)
-		}
-	}
-
-	return nil
 }

@@ -49,14 +49,6 @@ func (r *Router) RegisterDriver(driver drivers.Driver) {
 	log.Printf("[router] Registered driver: %s (available: %v)", driver.Name(), driver.IsAvailable())
 }
 
-// UnregisterDriver 注销驱动
-func (r *Router) UnregisterDriver(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.drivers, name)
-	log.Printf("[router] Unregistered driver: %s", name)
-}
-
 // Route 路由消息到合适的渠道
 func (r *Router) Route(msg *types.NotifyMessage) error {
 	r.mu.RLock()
@@ -176,11 +168,4 @@ func (r *Router) GetAvailableDrivers() []drivers.DriverInfo {
 		})
 	}
 	return result
-}
-
-// GetDriver 获取指定驱动
-func (r *Router) GetDriver(name string) drivers.Driver {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.drivers[name]
 }
