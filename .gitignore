@@ -58,3 +58,6 @@ temp/
 
 # HAR files (network captures)
 *.har
+
+# Docs (development plans)
+docs/
