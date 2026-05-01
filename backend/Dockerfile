@@ -20,6 +20,9 @@ FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata
 
+# Set timezone to Asia/Shanghai
+ENV TZ=Asia/Shanghai
+
 WORKDIR /app
 
 # Copy binary from builder

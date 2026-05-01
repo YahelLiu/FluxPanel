@@ -19,6 +19,9 @@ func NewIntentRecognizer() *IntentRecognizer {
 func (r *IntentRecognizer) Recognize(msg string) *models.AgentResult {
 	msg = strings.TrimSpace(msg)
 
+	// 标准化中文数字
+	msg = normalizeChineseTimeDesc(msg)
+
 	// 提醒意图
 	if result := r.recognizeReminder(msg); result != nil {
 		return result
@@ -59,42 +62,115 @@ func (r *IntentRecognizer) recognizeReminder(msg string) *models.AgentResult {
 		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCancel, Content: content}
 	}
 
-	// 创建提醒 - X分钟后提醒我xxx（宽松匹配，不要求开头）
-	timeReminder := regexp.MustCompile(`(\d+)\s*(分钟|min|小时|hour|h)后\s*(?:提醒|叫)\s*我\s*(.+)$`)
-	if matches := timeReminder.FindStringSubmatch(msg); len(matches) == 4 {
+	// ========== 增强的提醒规则 ==========
+
+	// 半小时后提醒我xxx
+	halfHourReminder := regexp.MustCompile(`(?i)(?:半|0\.5)\s*(?:小时|h)?\s*(?:之?后)\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := halfHourReminder.FindStringSubmatch(msg); len(matches) >= 2 {
+		content := strings.TrimSpace(matches[1])
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: "30分钟后"}
+	}
+
+	// X小时后（支持小数如1.5小时）
+	hoursReminder := regexp.MustCompile(`(?i)(\d+\.?\d*)\s*(?:小时|h)\s*(?:之?后)\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := hoursReminder.FindStringSubmatch(msg); len(matches) >= 3 {
+		hours := matches[1]
+		content := strings.TrimSpace(matches[2])
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: hours + "小时后"}
+	}
+
+	// X分钟后提醒我xxx（支持"之后"、"过"、"一下"）
+	timeReminder := regexp.MustCompile(`(?i)(?:过|之后?)?\s*(\d+)\s*(?:分钟|min)\s*(?:之?后)?\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := timeReminder.FindStringSubmatch(msg); len(matches) >= 3 {
 		num := matches[1]
-		unit := matches[2]
+		content := strings.TrimSpace(matches[2])
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: num + "分钟后"}
+	}
+
+	// 明天X点/X点钟（支持上午/下午/晚上）
+	tomorrowReminder := regexp.MustCompile(`明天\s*(?:上午|下午|晚上)?\s*(\d+)\s*(?:点|点钟)(\d+)?\s*(?:分)?\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := tomorrowReminder.FindStringSubmatch(msg); len(matches) >= 4 {
+		hour := matches[1]
+		minute := matches[2]
 		content := strings.TrimSpace(matches[3])
-		if unit == "min" {
-			unit = "分钟"
-		} else if unit == "h" || unit == "hour" {
-			unit = "小时"
+		timeStr := "明天" + hour + "点"
+		if minute != "" {
+			timeStr += minute + "分"
 		}
-		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: num + unit + "后"}
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: timeStr}
 	}
 
-	// 明天X点提醒我xxx
-	tomorrowReminder := regexp.MustCompile(`明天(\d+)点(?:\d+分)?\s*(?:提醒|叫)\s*我\s*(.+)$`)
-	if matches := tomorrowReminder.FindStringSubmatch(msg); len(matches) >= 3 {
+	// 后天X点
+	dayAfterReminder := regexp.MustCompile(`后天\s*(?:上午|下午|晚上)?\s*(\d+)\s*(?:点|点钟)?(\d+)?\s*(?:分)?\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := dayAfterReminder.FindStringSubmatch(msg); len(matches) >= 4 {
 		hour := matches[1]
-		content := strings.TrimSpace(matches[2])
-		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: "明天" + hour + "点"}
+		minute := matches[2]
+		content := strings.TrimSpace(matches[3])
+		timeStr := "后天" + hour + "点"
+		if minute != "" {
+			timeStr += minute + "分"
+		}
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: timeStr}
 	}
 
-	// 今晚X点提醒我xxx
-	tonightReminder := regexp.MustCompile(`今晚(\d+)点\s*(?:提醒|叫)\s*我\s*(.+)$`)
-	if matches := tonightReminder.FindStringSubmatch(msg); len(matches) >= 3 {
+	// 今晚X点
+	tonightReminder := regexp.MustCompile(`今晚\s*(\d+)\s*(?:点|点钟)?(\d+)?\s*(?:分)?\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := tonightReminder.FindStringSubmatch(msg); len(matches) >= 4 {
 		hour := matches[1]
-		content := strings.TrimSpace(matches[2])
-		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: "今晚" + hour + "点"}
+		minute := matches[2]
+		content := strings.TrimSpace(matches[3])
+		timeStr := "今晚" + hour + "点"
+		if minute != "" {
+			timeStr += minute + "分"
+		}
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: timeStr}
 	}
 
-	// 今天X点提醒我xxx
-	todayReminder := regexp.MustCompile(`今天(\d+)点(?:\d+分)?\s*(?:提醒|叫)\s*我\s*(.+)$`)
-	if matches := todayReminder.FindStringSubmatch(msg); len(matches) >= 3 {
+	// 今天X点（支持上午/下午/晚上）
+	todayReminder := regexp.MustCompile(`今天\s*(上午|下午|晚上)?\s*(\d+)\s*(?:点|点钟)?(\d+)?\s*(?:分)?\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := todayReminder.FindStringSubmatch(msg); len(matches) >= 5 {
+		period := matches[1]
+		hour := matches[2]
+		minute := matches[3]
+		content := strings.TrimSpace(matches[4])
+		timeStr := "今天"
+		if period != "" {
+			timeStr += period
+		}
+		timeStr += hour + "点"
+		if minute != "" {
+			timeStr += minute + "分"
+		}
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: timeStr}
+	}
+
+	// X点半/X点一刻
+	halfTimeReminder := regexp.MustCompile(`(\d+)\s*点半\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := halfTimeReminder.FindStringSubmatch(msg); len(matches) >= 3 {
 		hour := matches[1]
 		content := strings.TrimSpace(matches[2])
-		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: "今天" + hour + "点"}
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: hour + "点半"}
+	}
+
+	quarterTimeReminder := regexp.MustCompile(`(\d+)\s*点(?:一)?刻\s*(?:提醒|叫)\s*(?:我|一下)?\s*(.+)$`)
+	if matches := quarterTimeReminder.FindStringSubmatch(msg); len(matches) >= 3 {
+		hour := matches[1]
+		content := strings.TrimSpace(matches[2])
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: hour + "点一刻"}
+	}
+
+	// 时间在后的格式：提醒我xxx，X分钟后
+	timeAfterContent := regexp.MustCompile(`(?:提醒|叫)\s*(?:我|一下)?\s*(.+?)[，,]?\s*(\d+)\s*(?:分钟|小时)\s*(?:之?后)$`)
+	if matches := timeAfterContent.FindStringSubmatch(msg); len(matches) >= 3 {
+		content := strings.TrimSpace(matches[1])
+		timeDesc := matches[2]
+		// 检查是否有单位
+		if strings.Contains(msg, "小时") {
+			timeDesc += "小时后"
+		} else {
+			timeDesc += "分钟后"
+		}
+		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: timeDesc}
 	}
 
 	// "提醒我xxx" - 简单格式
@@ -111,6 +187,14 @@ func (r *IntentRecognizer) recognizeReminder(msg string) *models.AgentResult {
 		}
 	}
 
+	// "提醒一下xxx"
+	if strings.HasPrefix(msg, "提醒一下") {
+		content := strings.TrimSpace(strings.TrimPrefix(msg, "提醒一下"))
+		if content != "" {
+			return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content}
+		}
+	}
+
 	// "帮我xxx" - 作为提醒
 	if strings.HasPrefix(msg, "帮我") || strings.HasPrefix(msg, "记得") || strings.HasPrefix(msg, "别忘了") {
 		content := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(msg, "帮我"), "记得"), "别忘了"))
@@ -120,6 +204,7 @@ func (r *IntentRecognizer) recognizeReminder(msg string) *models.AgentResult {
 		}{
 			{regexp.MustCompile(`(.+?)\s*(\d+)\s*(分钟|小时)后$`), func(m []string) (string, string) { return m[1], m[2] + m[3] + "后" }},
 			{regexp.MustCompile(`(.+?)\s*明天(\d+)点$`), func(m []string) (string, string) { return m[1], "明天" + m[2] + "点" }},
+			{regexp.MustCompile(`(.+?)\s*后天(\d+)点$`), func(m []string) (string, string) { return m[1], "后天" + m[2] + "点" }},
 		}
 		for _, tp := range timePatterns {
 			if matches := tp.re.FindStringSubmatch(content); len(matches) >= 3 {
@@ -129,6 +214,51 @@ func (r *IntentRecognizer) recognizeReminder(msg string) *models.AgentResult {
 		}
 		if content != "" {
 			return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content}
+		}
+	}
+
+	// ========== 兜底规则：需要同时满足动作关键词 + 时间相关信息 ==========
+	// 这确保格式不匹配但有明确时间意图的消息也会走提醒流程
+	actionKeywords := []string{"提醒", "叫我", "记得", "别忘了"}
+	timeIndicators := []string{
+		"分钟后", "小时后", "天后", "周后", // 相对时间
+		"明天", "后天", "大后天", "今晚", // 绝对日期
+		"下周", "上周", "这周", // 周相关
+		"点半", "刻", // 具体时间点（避免单独的"点"误匹配）
+		"上午", "下午", "晚上", "早上", "中午", // 时段
+	}
+
+	hasAction := false
+	for _, kw := range actionKeywords {
+		if strings.Contains(msg, kw) {
+			hasAction = true
+			break
+		}
+	}
+
+	hasTime := false
+	for _, ti := range timeIndicators {
+		if strings.Contains(msg, ti) {
+			hasTime = true
+			break
+		}
+	}
+	// 也检查数字+点的格式（如"3点"）
+	if !hasTime {
+		if matched, _ := regexp.MatchString(`\d+\s*点`, msg); matched {
+			hasTime = true
+		}
+	}
+
+	// 只有同时满足两个条件才走兜底
+	if hasAction && hasTime {
+		extractPattern := regexp.MustCompile(`(?:提醒|叫|记得)\s*(?:我|一下)?\s*(.+)$`)
+		if matches := extractPattern.FindStringSubmatch(msg); len(matches) >= 2 {
+			content := strings.TrimSpace(matches[1])
+			if content != "" {
+				// 把原始消息作为 timeDesc，让 LLM 解析完整的时间表达
+				return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionCreate, Content: content, Time: msg}
+			}
 		}
 	}
 

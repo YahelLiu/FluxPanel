@@ -1,7 +1,9 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -25,7 +27,12 @@ func (h *ReminderHandler) Create(userID uint, content string, timeDesc string) (
 
 	remindAt, err := ParseTimeDescription(timeDesc)
 	if err != nil {
-		return "", fmt.Errorf("无法解析时间: %w", err)
+		// 正则解析失败，尝试 LLM 解析
+		log.Printf("[reminder] 正则解析时间失败: %v, 尝试 LLM 解析", err)
+		remindAt, err = h.parseTimeWithLLM(content, timeDesc)
+		if err != nil {
+			return "", fmt.Errorf("无法解析时间: %w", err)
+		}
 	}
 
 	reminder := models.Reminder{
@@ -99,4 +106,96 @@ func (h *ReminderHandler) formatResponse(content string, remindAt time.Time) str
 	}
 
 	return fmt.Sprintf("好的，我会在%s提醒你%s。", displayTimeDesc, content)
+}
+
+// LLMTimeParseResult LLM 时间解析结果
+type LLMTimeParseResult struct {
+	Content  string `json:"content"`
+	RemindAt string `json:"remind_at"`
+	Error    string `json:"error,omitempty"`
+}
+
+// parseTimeWithLLM 使用 LLM 解析时间
+func (h *ReminderHandler) parseTimeWithLLM(content string, timeDesc string) (time.Time, error) {
+	llm := GetLLMService()
+	if llm == nil {
+		return time.Time{}, fmt.Errorf("LLM 服务不可用")
+	}
+
+	now := time.Now()
+	prompt := fmt.Sprintf(`你是一个时间解析助手。从用户的消息中提取提醒时间。
+
+当前时间：%s
+用户提供的提醒内容：%s
+用户提供的时间描述：%s
+
+请返回 JSON 格式（只返回 JSON，不要其他内容）：
+{
+    "content": "提醒内容（如果需要调整）",
+    "remind_at": "YYYY-MM-DD HH:MM",
+    "error": "如果无法解析时间，在这里说明原因"
+}
+
+注意：
+1. remind_at 必须是未来时间
+2. 如果用户说"下周三"，计算具体日期
+3. 如果用户说"月底"，计算当月最后一天
+4. 如果时间描述不明确，在 error 中说明
+5. 返回的时间格式必须是 YYYY-MM-DD HH:MM`, now.Format("2006-01-02 15:04:05"), content, timeDesc)
+
+	resp, err := llm.Chat([]ChatMessage{
+		{Role: "user", Content: prompt},
+	})
+	if err != nil {
+		log.Printf("[reminder] LLM 调用失败: %v", err)
+		return time.Time{}, fmt.Errorf("LLM 解析失败: %w", err)
+	}
+
+	// 清理响应（可能包含 markdown 代码块）
+	resp = strings.TrimSpace(resp)
+	if strings.HasPrefix(resp, "```") {
+		// 移除 markdown 代码块
+		lines := strings.Split(resp, "\n")
+		var cleanLines []string
+		for _, line := range lines {
+			if strings.HasPrefix(line, "```") {
+				continue
+			}
+			cleanLines = append(cleanLines, line)
+		}
+		resp = strings.Join(cleanLines, "\n")
+	}
+
+	var result LLMTimeParseResult
+	if err := json.Unmarshal([]byte(resp), &result); err != nil {
+		log.Printf("[reminder] 解析 LLM 响应失败: %v, 响应: %s", err, resp)
+		return time.Time{}, fmt.Errorf("解析 LLM 响应失败: %w", err)
+	}
+
+	// 只有在没有返回时间的情况下，error 才是真正的错误
+	if result.RemindAt == "" {
+		if result.Error != "" {
+			return time.Time{}, fmt.Errorf("LLM 解析错误: %s", result.Error)
+		}
+		return time.Time{}, fmt.Errorf("LLM 未返回时间")
+	}
+
+	// 解析时间
+	remindAt, err := time.ParseInLocation("2006-01-02 15:04", result.RemindAt, now.Location())
+	if err != nil {
+		return time.Time{}, fmt.Errorf("解析时间格式失败: %w", err)
+	}
+
+	// 确保是未来时间
+	if remindAt.Before(now) {
+		return time.Time{}, fmt.Errorf("提醒时间已过")
+	}
+
+	// 如果有警告信息，记录日志但不阻断
+	if result.Error != "" {
+		log.Printf("[reminder] LLM 时间调整提示: %s", result.Error)
+	}
+
+	log.Printf("[reminder] LLM 解析成功: content=%s, remind_at=%s", result.Content, result.RemindAt)
+	return remindAt, nil
 }
