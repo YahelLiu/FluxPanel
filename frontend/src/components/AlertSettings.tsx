@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Bell, X, AlertTriangle, CloudSun, Bot } from 'lucide-react'
-import { AlertTab, ChannelsTab, LogsTab, ChannelForm, ThresholdForm } from './settings'
+import { AlertTriangle, X } from 'lucide-react'
+import { AlertTab, LogsTab, ThresholdForm } from './settings'
 import type { NotificationChannel } from './settings/ChannelsTab'
 import type { AlertThreshold } from './settings/ThresholdForm'
 
@@ -17,32 +17,17 @@ interface AlertRecord {
   created_at: string
 }
 
-interface NotificationSettingsProps {
-  onClose?: () => void
+interface AlertSettingsProps {
+  onClose: () => void
 }
 
-// Import WeatherSettings and AssistantSettings
-import { WeatherSettings } from './WeatherSettings'
-import { AssistantSettings } from './AssistantSettings'
-
-export function NotificationSettings({ onClose }: NotificationSettingsProps) {
-  const [channels, setChannels] = useState<NotificationChannel[]>([])
+export function AlertSettings({ onClose }: AlertSettingsProps) {
   const [thresholds, setThresholds] = useState<AlertThreshold[]>([])
   const [alertRecords, setAlertRecords] = useState<AlertRecord[]>([])
-  const [activeTab, setActiveTab] = useState<'channels' | 'alerts' | 'logs' | 'weather' | 'assistant'>('alerts')
-  const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null)
+  const [channels, setChannels] = useState<NotificationChannel[]>([])
+  const [activeTab, setActiveTab] = useState<'rules' | 'logs'>('rules')
   const [editingThreshold, setEditingThreshold] = useState<AlertThreshold | null>(null)
-  const [showChannelForm, setShowChannelForm] = useState(false)
   const [showThresholdForm, setShowThresholdForm] = useState(false)
-
-  const fetchChannels = async () => {
-    try {
-      const res = await fetch('/api/notifications/channels')
-      setChannels(await res.json() || [])
-    } catch (error) {
-      console.error('Failed to fetch channels:', error)
-    }
-  }
 
   const fetchThresholds = async () => {
     try {
@@ -63,32 +48,20 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
     }
   }
 
+  const fetchChannels = async () => {
+    try {
+      const res = await fetch('/api/notifications/channels')
+      setChannels(await res.json() || [])
+    } catch (error) {
+      console.error('Failed to fetch channels:', error)
+    }
+  }
+
   useEffect(() => {
-    fetchChannels()
     fetchThresholds()
     fetchAlertRecords()
+    fetchChannels()
   }, [])
-
-  const toggleChannel = async (channel: NotificationChannel) => {
-    await fetch(`/api/notifications/channels/${channel.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...channel, enabled: !channel.enabled })
-    })
-    fetchChannels()
-  }
-
-  const deleteChannel = async (id: number) => {
-    if (!confirm('确定要删除此通知渠道吗？')) return
-    await fetch(`/api/notifications/channels/${id}`, { method: 'DELETE' })
-    fetchChannels()
-  }
-
-  const testChannel = async (id: number) => {
-    const res = await fetch(`/api/notifications/channels/${id}/test`, { method: 'POST' })
-    const data = await res.json()
-    alert(data.success ? '测试通知发送成功！' : `测试失败: ${data.error}`)
-  }
 
   const toggleThreshold = async (threshold: AlertThreshold) => {
     await fetch(`/api/alerts/thresholds/${threshold.id}/toggle`, { method: 'PUT' })
@@ -120,41 +93,40 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden border dark:border-gray-700">
-        <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
+      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-4xl border dark:border-gray-700 flex flex-col" style={{ height: '80vh' }}>
+        {/* Header - 固定高度 */}
+        <div className="flex items-center justify-between p-4 border-b dark:border-gray-700 flex-shrink-0">
           <div className="flex items-center gap-2">
-            <Bell className="h-5 w-5" />
-            <h2 className="text-lg font-semibold">通知与告警设置</h2>
+            <AlertTriangle className="h-5 w-5" />
+            <h2 className="text-lg font-semibold">告警设置</h2>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex border-b dark:border-gray-700">
+        {/* Tabs - 固定高度 */}
+        <div className="flex border-b dark:border-gray-700 flex-shrink-0">
           {[
-            { key: 'alerts', label: '告警规则', icon: <AlertTriangle className="h-4 w-4" />, count: thresholds.length },
-            { key: 'channels', label: '通知渠道', icon: <Bell className="h-4 w-4" />, count: channels.length },
-            { key: 'weather', label: '天气推送', icon: <CloudSun className="h-4 w-4" /> },
-            { key: 'assistant', label: 'AI 设置', icon: <Bot className="h-4 w-4" /> },
-            { key: 'logs', label: '告警记录', icon: <></> },
+            { key: 'rules', label: '告警规则', count: thresholds.length },
+            { key: 'logs', label: '告警记录', count: alertRecords.length },
           ].map(tab => (
             <button
               key={tab.key}
-              className={`px-4 py-2 text-sm font-medium flex items-center gap-1 ${
+              className={`px-4 py-2 text-sm font-medium ${
                 activeTab === tab.key ? 'border-b-2 border-primary text-primary' : 'text-gray-600 dark:text-gray-400'
               }`}
               onClick={() => setActiveTab(tab.key as any)}
             >
-              {tab.icon}
               {tab.label}
-              {tab.count !== undefined && ` (${tab.count})`}
+              {tab.count > 0 && ` (${tab.count})`}
             </button>
           ))}
         </div>
 
-        <div className="p-4 overflow-y-auto max-h-[calc(90vh-130px)]">
-          {activeTab === 'alerts' && (
+        {/* Content - 固定高度，超出滚动 */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {activeTab === 'rules' && (
             <AlertTab
               thresholds={thresholds}
               alertRecords={alertRecords}
@@ -169,17 +141,6 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
             />
           )}
 
-          {activeTab === 'channels' && (
-            <ChannelsTab
-              channels={channels}
-              onAdd={() => { setEditingChannel(null); setShowChannelForm(true) }}
-              onEdit={(channel) => { setEditingChannel(channel); setShowChannelForm(true) }}
-              onToggle={toggleChannel}
-              onDelete={deleteChannel}
-              onTest={testChannel}
-            />
-          )}
-
           {activeTab === 'logs' && (
             <LogsTab
               alertRecords={alertRecords}
@@ -187,23 +148,7 @@ export function NotificationSettings({ onClose }: NotificationSettingsProps) {
               onDelete={deleteAlertRecord}
             />
           )}
-
-          {activeTab === 'weather' && (
-            <WeatherSettings channels={channels} />
-          )}
-
-          {activeTab === 'assistant' && (
-            <AssistantSettings />
-          )}
         </div>
-
-        {showChannelForm && (
-          <ChannelForm
-            channel={editingChannel}
-            onClose={() => { setShowChannelForm(false); setEditingChannel(null) }}
-            onSave={() => { setShowChannelForm(false); setEditingChannel(null); fetchChannels() }}
-          />
-        )}
 
         {showThresholdForm && (
           <ThresholdForm
