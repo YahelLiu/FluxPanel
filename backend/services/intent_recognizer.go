@@ -7,33 +7,25 @@ import (
 	"client-monitor/models"
 )
 
-// IntentRecognizer 意图识别器
-type IntentRecognizer struct{}
-
-// NewIntentRecognizer 创建意图识别器
-func NewIntentRecognizer() *IntentRecognizer {
-	return &IntentRecognizer{}
-}
-
-// Recognize 识别用户意图
-func (r *IntentRecognizer) Recognize(msg string) *models.AgentResult {
+// RecognizeIntent 识别用户意图
+func RecognizeIntent(msg string) *models.AgentResult {
 	msg = strings.TrimSpace(msg)
 
 	// 标准化中文数字
 	msg = normalizeChineseTimeDesc(msg)
 
 	// 提醒意图
-	if result := r.recognizeReminder(msg); result != nil {
+	if result := recognizeReminder(msg); result != nil {
 		return result
 	}
 
 	// 记忆意图
-	if result := r.recognizeMemory(msg); result != nil {
+	if result := recognizeMemory(msg); result != nil {
 		return result
 	}
 
 	// 聊天意图
-	if result := r.recognizeChat(msg); result != nil {
+	if result := recognizeChat(msg); result != nil {
 		return result
 	}
 
@@ -42,7 +34,7 @@ func (r *IntentRecognizer) Recognize(msg string) *models.AgentResult {
 }
 
 // recognizeReminder 识别提醒意图
-func (r *IntentRecognizer) recognizeReminder(msg string) *models.AgentResult {
+func recognizeReminder(msg string) *models.AgentResult {
 	// 查看提醒列表
 	if matched, _ := regexp.MatchString(`^(我有哪些|查看|列出).*(提醒|reminder)`, msg); matched {
 		return &models.AgentResult{Intent: models.IntentReminder, Action: models.ActionList}
@@ -266,7 +258,7 @@ func (r *IntentRecognizer) recognizeReminder(msg string) *models.AgentResult {
 }
 
 // recognizeMemory 识别记忆意图
-func (r *IntentRecognizer) recognizeMemory(msg string) *models.AgentResult {
+func recognizeMemory(msg string) *models.AgentResult {
 	// 记住xxx
 	if strings.HasPrefix(msg, "记住") {
 		content := strings.TrimSpace(strings.TrimPrefix(msg, "记住"))
@@ -303,7 +295,7 @@ func (r *IntentRecognizer) recognizeMemory(msg string) *models.AgentResult {
 }
 
 // recognizeChat 识别聊天意图
-func (r *IntentRecognizer) recognizeChat(msg string) *models.AgentResult {
+func recognizeChat(msg string) *models.AgentResult {
 	// 简单问候
 	greetings := []string{"你好", "您好", "嗨", "hi", "hello", "早上好", "晚上好", "在吗"}
 	for _, g := range greetings {

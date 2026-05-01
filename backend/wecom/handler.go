@@ -21,11 +21,12 @@ type MessageHandler struct {
 
 // WeatherFuncs 天气服务函数集合
 type WeatherFuncs struct {
-	GetConfig       func() (apiKey, apiHost string, ok bool)
-	TestWeather     func(apiKey, apiHost, location string) (tempMax, tempMin, textDay, textNight, fxDate string, err error)
-	GetWeatherDays  func(apiKey, apiHost, location string) ([]map[string]string, error)
-	BuildMessage    func(location, tempMax, tempMin, textDay, textNight, fxDate string) string
-	SendWeather     func(location, content string) error
+	GetConfig              func() (apiKey, apiHost string, ok bool)
+	TestWeather            func(apiKey, apiHost, location string) (tempMax, tempMin, textDay, textNight, fxDate string, err error)
+	GetWeatherDays         func(apiKey, apiHost, location string) ([]map[string]string, error)
+	BuildMessage           func(location, tempMax, tempMin, textDay, textNight, fxDate string) string
+	SendWeather            func(location, content string) error
+	SendWeatherToChannels  func(location, content string, channelIDs []int) []error
 }
 
 // ServiceFuncs 服务函数集合（用于依赖注入）
@@ -115,6 +116,7 @@ func NewMessageHandlerWithServices(serviceFuncs *ServiceFuncs) *MessageHandler {
 			serviceFuncs.Weather.GetWeatherDays,
 			serviceFuncs.Weather.BuildMessage,
 			serviceFuncs.Weather.SendWeather,
+			serviceFuncs.Weather.SendWeatherToChannels,
 		)
 	}
 

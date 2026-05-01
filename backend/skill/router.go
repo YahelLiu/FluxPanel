@@ -96,14 +96,3 @@ func (r *Router) Route(userID, message string) ([]*Skill, error) {
 
 	return r.SelectActive(eligible, message), nil
 }
-
-// MatchByKeyword 关键词匹配
-func (r *Router) MatchByKeyword(message string, triggers []string) bool {
-	messageLower := strings.ToLower(message)
-	for _, trigger := range triggers {
-		if strings.Contains(messageLower, strings.ToLower(trigger)) {
-			return true
-		}
-	}
-	return false
-}

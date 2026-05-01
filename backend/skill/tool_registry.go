@@ -24,6 +24,8 @@ type (
 	BuildWeatherMessageFunc func(location, tempMax, tempMin, textDay, textNight, fxDate string) string
 	// SendWeatherFunc 发送天气通知
 	SendWeatherFunc func(location, content string) error
+	// SendWeatherToChannelsFunc 发送天气通知到指定渠道
+	SendWeatherToChannelsFunc func(location, content string, channelIDs []int) []error
 
 	// ReminderCreateFunc 创建提醒
 	ReminderCreateFunc func(userID uint, content, timeDesc string) (string, error)
@@ -49,11 +51,12 @@ type ToolRegistry struct {
 	mu     sync.RWMutex
 
 	// 注入的服务函数
-	getWeatherConfig  GetWeatherConfigFunc
-	testWeather       TestWeatherFunc
-	getWeatherDays    GetWeatherDaysFunc
-	buildWeatherMsg   BuildWeatherMessageFunc
-	sendWeather       SendWeatherFunc
+	getWeatherConfig       GetWeatherConfigFunc
+	testWeather            TestWeatherFunc
+	getWeatherDays         GetWeatherDaysFunc
+	buildWeatherMsg        BuildWeatherMessageFunc
+	sendWeather            SendWeatherFunc
+	sendWeatherToChannels  SendWeatherToChannelsFunc
 
 	reminderCreate ReminderCreateFunc
 	reminderList    ReminderListFunc
@@ -82,12 +85,14 @@ func (r *ToolRegistry) SetWeatherFunctions(
 	getDays GetWeatherDaysFunc,
 	buildMsg BuildWeatherMessageFunc,
 	send SendWeatherFunc,
+	sendToChannels SendWeatherToChannelsFunc,
 ) {
 	r.getWeatherConfig = getConfig
 	r.testWeather = test
 	r.getWeatherDays = getDays
 	r.buildWeatherMsg = buildMsg
 	r.sendWeather = send
+	r.sendWeatherToChannels = sendToChannels
 	log.Printf("[tool] 天气服务函数已注入")
 }
 
@@ -632,7 +637,7 @@ func (r *ToolRegistry) handleWeatherGet(userID string, params map[string]interfa
 }
 
 func (r *ToolRegistry) handleWeatherSend(userID string, params map[string]interface{}) (interface{}, error) {
-	if r.getWeatherConfig == nil || r.testWeather == nil || r.buildWeatherMsg == nil || r.sendWeather == nil {
+	if r.getWeatherConfig == nil || r.testWeather == nil || r.buildWeatherMsg == nil {
 		return nil, fmt.Errorf("天气服务未配置")
 	}
 
@@ -663,6 +668,12 @@ func (r *ToolRegistry) handleWeatherSend(userID string, params map[string]interf
 
 	var results []string
 	for _, client := range clients {
+		// 检查是否配置了渠道
+		if len(client.ChannelIDs) == 0 {
+			results = append(results, fmt.Sprintf("%s: 未配置通知渠道", client.ClientID))
+			continue
+		}
+
 		// 获取客户端位置
 		var event models.Event
 		if err := database.DB.Where("client_id = ?", client.ClientID).
@@ -695,10 +706,27 @@ func (r *ToolRegistry) handleWeatherSend(userID string, params map[string]interf
 
 		content := r.buildWeatherMsg(location, tempMax, tempMin, textDay, textNight, fxDate)
 
-		if err := r.sendWeather(location, content); err != nil {
-			results = append(results, fmt.Sprintf("%s: 发送失败 - %v", client.ClientID, err))
+		// 发送到用户选择的渠道
+		if r.sendWeatherToChannels != nil {
+			errs := r.sendWeatherToChannels(location, content, client.ChannelIDs)
+			if len(errs) > 0 {
+				var errStrs []string
+				for _, e := range errs {
+					errStrs = append(errStrs, e.Error())
+				}
+				results = append(results, fmt.Sprintf("%s: 部分发送失败 - %s", client.ClientID, strings.Join(errStrs, ", ")))
+			} else {
+				results = append(results, fmt.Sprintf("%s: 已发送 %s 天气到 %d 个渠道", client.ClientID, location, len(client.ChannelIDs)))
+			}
+		} else if r.sendWeather != nil {
+			// 兼容旧方法
+			if err := r.sendWeather(location, content); err != nil {
+				results = append(results, fmt.Sprintf("%s: 发送失败 - %v", client.ClientID, err))
+			} else {
+				results = append(results, fmt.Sprintf("%s: 已发送 %s 天气", client.ClientID, location))
+			}
 		} else {
-			results = append(results, fmt.Sprintf("%s: 已发送 %s 天气", client.ClientID, location))
+			results = append(results, fmt.Sprintf("%s: 发送函数未配置", client.ClientID))
 		}
 	}
 

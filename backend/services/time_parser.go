@@ -8,14 +8,6 @@ import (
 	"time"
 )
 
-// TimeParser 时间解析器
-type TimeParser struct{}
-
-// NewTimeParser 创建时间解析器
-func NewTimeParser() *TimeParser {
-	return &TimeParser{}
-}
-
 // ParseTimeDescription 解析时间描述
 func ParseTimeDescription(desc string) (time.Time, error) {
 	desc = strings.TrimSpace(desc)
