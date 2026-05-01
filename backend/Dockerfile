@@ -28,6 +28,12 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/main .
 
+# Copy default skills
+COPY --from=builder /app/skills ./skills
+
+# Create skills directory if not exists
+RUN mkdir -p /app/skills
+
 # Expose port
 EXPOSE 8080
 

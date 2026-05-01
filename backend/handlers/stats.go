@@ -1,14 +1,17 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
 	"client-monitor/database"
 	"client-monitor/models"
+	"client-monitor/notify"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/datatypes"
 )
 
 // Summary GET /api/summary - 获取汇总数据
@@ -351,4 +354,176 @@ func UpdateClientWeather(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, order)
+}
+
+// SetPrimaryClient PUT /api/clients/:client_id/primary - 设置主客户端
+func SetPrimaryClient(c *gin.Context) {
+	clientID := c.Param("client_id")
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id required"})
+		return
+	}
+
+	// 先清除所有客户端的主客户端标记
+	database.DB.Model(&models.ClientOrder{}).Where("is_primary = ?", true).Update("is_primary", false)
+
+	// 设置当前客户端为主客户端
+	var order models.ClientOrder
+	result := database.DB.Where("client_id = ?", clientID).First(&order)
+	if result.Error != nil {
+		// 创建新记录
+		order = models.ClientOrder{
+			ClientID:  clientID,
+			IsPrimary: true,
+		}
+		if err := database.DB.Create(&order).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// 更新现有记录
+		order.IsPrimary = true
+		if err := database.DB.Save(&order).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, order)
+}
+
+// UpdateClientChannels PUT /api/clients/:client_id/channels - 更新客户端绑定的通知渠道
+func UpdateClientChannels(c *gin.Context) {
+	clientID := c.Param("client_id")
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id required"})
+		return
+	}
+
+	var req struct {
+		ChannelIDs []int `json:"channel_ids"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var order models.ClientOrder
+	result := database.DB.Where("client_id = ?", clientID).First(&order)
+	if result.Error != nil {
+		// 创建新记录
+		order = models.ClientOrder{
+			ClientID:   clientID,
+			ChannelIDs: models.IntArray(req.ChannelIDs),
+		}
+		if err := database.DB.Create(&order).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// 更新现有记录
+		order.ChannelIDs = models.IntArray(req.ChannelIDs)
+		if err := database.DB.Save(&order).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, order)
+}
+
+// SetClientHidden PUT /api/clients/:client_id/hidden - 设置客户端隐藏状态
+func SetClientHidden(c *gin.Context) {
+	clientID := c.Param("client_id")
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id required"})
+		return
+	}
+
+	var req struct {
+		Hidden bool `json:"hidden"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var order models.ClientOrder
+	result := database.DB.Where("client_id = ?", clientID).First(&order)
+	if result.Error != nil {
+		// 创建新记录
+		order = models.ClientOrder{
+			ClientID: clientID,
+			Hidden:   req.Hidden,
+		}
+		if err := database.DB.Create(&order).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// 更新现有记录
+		order.Hidden = req.Hidden
+		if err := database.DB.Save(&order).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, order)
+}
+
+// ClientHeartbeat POST /api/clients/:client_id/heartbeat - 客户端心跳（记录位置）
+func ClientHeartbeat(c *gin.Context) {
+	clientID := c.Param("client_id")
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id required"})
+		return
+	}
+
+	// 获取客户端 IP
+	ip := c.ClientIP()
+
+	// 通过 IP 获取位置
+	location, err := notify.GetWeatherService().LookupLocationByIP(ip)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success":  true,
+			"client_id": clientID,
+			"ip":       ip,
+			"location": nil,
+			"message":  "无法获取位置信息",
+		})
+		return
+	}
+
+	// 创建一个事件记录
+	data := map[string]interface{}{
+		"location": location,
+		"ip":       ip,
+	}
+	dataJSON, _ := json.Marshal(data)
+
+	event := models.Event{
+		ClientID:  clientID,
+		EventType: "heartbeat",
+		Data:      datatypes.JSON(dataJSON),
+		Status:    "success",
+		CreatedAt: time.Now(),
+	}
+	database.DB.Create(&event)
+
+	// 广播到 WebSocket
+	BroadcastMessage(jsonMarshal(map[string]interface{}{
+		"type":  "event",
+		"event": event,
+	}))
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"client_id": clientID,
+		"ip":       ip,
+		"location": location,
+	})
 }

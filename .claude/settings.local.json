@@ -22,7 +22,10 @@
       "Read(//d/code/apps/**)",
       "Bash(npx tsc *)",
       "Bash(powershell -Command \"Get-Content 'd:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\handlers\\\\notification.go' -Encoding UTF8 | Select-Object -Skip 437 -First 10\")",
-      "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\('d:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\handlers\\\\notification.go', [System.Text.Encoding]::UTF8\\)\")"
+      "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\('d:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\handlers\\\\notification.go', [System.Text.Encoding]::UTF8\\)\")",
+      "Bash(cd \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\backend\")",
+      "Bash(cd \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\")",
+      "Bash(go test *)"
     ]
   }
 }

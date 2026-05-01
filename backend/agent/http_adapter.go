@@ -2,16 +2,20 @@ package agent
 
 import (
 	"context"
+	"log"
 
 	"client-monitor/database"
 	"client-monitor/models"
 	"client-monitor/services"
+	"client-monitor/skill"
 )
 
 // HTTPAgent HTTP API 适配器（通义千问/OpenAI等）
 type HTTPAgent struct {
 	agentService *services.AgentService
 	model        string
+	skillManager *skill.Manager
+	skillRouter  *skill.Router
 }
 
 // NewHTTPAgent 创建 HTTP API 适配器
@@ -31,6 +35,12 @@ func NewHTTPAgent() *HTTPAgent {
 	}
 }
 
+// SetSkillManager 设置 skill manager
+func (a *HTTPAgent) SetSkillManager(manager *skill.Manager) {
+	a.skillManager = manager
+	a.skillRouter = skill.NewRouter(manager)
+}
+
 // Chat 实现 Agent 接口
 func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, message string) (string, error) {
 	// 1. 根据 wecom_user_id 获取或创建 AIUser
@@ -44,7 +54,19 @@ func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, message str
 		database.DB.Create(&user)
 	}
 
-	// 2. 调用现有的 AgentService
+	// 2. 路由 skills (如果有)
+	if a.skillRouter != nil {
+		activeSkills, err := a.skillRouter.Route(conversationID, message)
+		if err != nil {
+			log.Printf("[http_agent] skill routing error: %v", err)
+		}
+		if len(activeSkills) > 0 {
+			log.Printf("[http_agent] activated skills: %v", activeSkills)
+			// TODO: 将 skills 注入到消息处理中
+		}
+	}
+
+	// 3. 调用现有的 AgentService
 	return a.agentService.ProcessMessage(user.ID, message)
 }
 

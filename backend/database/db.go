@@ -45,6 +45,10 @@ func Connect(cfg *config.Config) error {
 		&models.LLMConfig{},
 		&models.WeComConfig{},
 		&models.UserAIPreference{},
+		// Skill models
+		&models.Skill{},
+		&models.UserSkillSetting{},
+		&models.SkillExecutionLog{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

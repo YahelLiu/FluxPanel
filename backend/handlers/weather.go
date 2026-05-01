@@ -4,10 +4,16 @@ import (
 	"client-monitor/database"
 	"client-monitor/models"
 	"client-monitor/notify"
+	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/datatypes"
 )
 
 // GetWeatherConfig GET /api/weather/config - 获取天气配置
@@ -87,7 +93,7 @@ func TestWeatherConfig(c *gin.Context) {
 		req.ApiHost = "devapi.qweather.com"
 	}
 
-	weather, err := notify.GetWeatherService().TestWeatherConfig(req.ApiKey, req.ApiHost, req.Location)
+	tempMax, tempMin, textDay, textNight, fxDate, err := notify.GetWeatherService().TestWeatherConfig(req.ApiKey, req.ApiHost, req.Location)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
 		return
@@ -95,7 +101,13 @@ func TestWeatherConfig(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"weather": weather,
+		"weather": map[string]string{
+			"temp_max":   tempMax,
+			"temp_min":   tempMin,
+			"text_day":   textDay,
+			"text_night": textNight,
+			"fx_date":    fxDate,
+		},
 	})
 }
 
@@ -167,31 +179,207 @@ func SendWeatherNow(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		// 如果解析失败，发送给所有启用的客户端
-		config := notify.GetWeatherService().GetWeatherConfig()
-		if config == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "天气配置未设置"})
-			return
-		}
-
-		go func() {
-			notify.GetWeatherService().SendWeatherNotifications(*config)
-		}()
-
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "正在发送天气通知..."})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 发送给指定客户端
-	if req.ClientID != "" {
-		err := notify.GetWeatherService().SendWeatherToClient(req.ClientID)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "天气通知已发送"})
+	if req.ClientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "client_id required"})
 		return
 	}
 
-	c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+	// 获取天气配置
+	config := notify.GetWeatherService().GetWeatherConfig()
+	if config == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "天气配置未设置"})
+		return
+	}
+
+	// 获取客户端最新位置
+	var event models.Event
+	if err := database.DB.Where("client_id = ?", req.ClientID).
+		Order("created_at desc").
+		First(&event).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "客户端没有数据"})
+		return
+	}
+
+	// 解析位置
+	var data map[string]interface{}
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "数据解析失败"})
+		return
+	}
+
+	location, _ := data["location"].(map[string]interface{})
+	city, _ := location["city"].(string)
+	if city == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "客户端没有位置信息"})
+		return
+	}
+
+	// 获取天气
+	tempMax, tempMin, textDay, textNight, fxDate, err := notify.GetWeatherService().TestWeatherConfig(config.ApiKey, config.ApiHost, city)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 构建消息
+	message := formatWeatherMessage(city, tempMax, tempMin, textDay, textNight, fxDate)
+
+	// 发送通知
+	if err := notify.GetNotifyService().SendWeather(city, message); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "天气通知已发送"})
+}
+
+// formatWeatherMessage 格式化天气消息
+func formatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
+	return "🌤️ 今日天气预报\n\n📍 " + location + " - " + fxDate + "\n\n🌡️ 温度: " + tempMin + "°C ~ " + tempMax + "°C\n☀️ 白天: " + textDay + "\n🌙 夜间: " + textNight
+}
+
+// PingWeather GET /api/weather/ping - 记录访问者位置（用于主设备定位）
+func PingWeather(c *gin.Context) {
+	clientID := c.Query("client_id")
+	if clientID == "" {
+		clientID = "Tab S9"
+	}
+
+	// 优先使用 URL 参数传入的 IP（适用于 frp 等代理环境）
+	ip := c.Query("ip")
+
+	// 如果没有传入 IP，尝试从请求头获取
+	if ip == "" {
+		ip = c.GetHeader("X-Forwarded-For")
+	}
+	if ip == "" {
+		ip = c.GetHeader("X-Real-IP")
+	}
+	if ip == "" {
+		ip = c.ClientIP()
+	}
+	// X-Forwarded-For 可能包含多个 IP，取第一个
+	if strings.Contains(ip, ",") {
+		ip = strings.TrimSpace(strings.Split(ip, ",")[0])
+	}
+
+	// 如果是内网 IP（Docker 网络），通过外部服务获取公网 IP
+	if isPrivateIP(ip) {
+		publicIP, err := getPublicIP()
+		if err == nil {
+			ip = publicIP
+		}
+	}
+
+	log.Printf("[ping] X-Forwarded-For: %s, X-Real-IP: %s, ClientIP: %s", c.GetHeader("X-Forwarded-For"), c.GetHeader("X-Real-IP"), c.ClientIP())
+	log.Printf("[ping] using IP: %s", ip)
+
+	// 通过 IP 获取位置
+	location, err := notify.GetWeatherService().LookupLocationByIP(ip)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"error":   "无法获取位置信息",
+			"ip":      ip,
+		})
+		return
+	}
+
+	city, _ := location["city"].(string)
+	if city == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"error":   "无法解析城市",
+			"ip":      ip,
+		})
+		return
+	}
+
+	// 创建事件记录（包含位置信息）
+	data := map[string]interface{}{
+		"location": location,
+		"ip":       ip,
+	}
+	dataJSON, _ := json.Marshal(data)
+
+	event := models.Event{
+		ClientID:  clientID,
+		EventType: "ping",
+		Data:      datatypes.JSON(dataJSON),
+		Status:    "success",
+		CreatedAt: time.Now(),
+	}
+	database.DB.Create(&event)
+
+	// 自动设置为主设备（先清除其他主设备）
+	database.DB.Model(&models.ClientOrder{}).Where("is_primary = ?", true).Update("is_primary", false)
+
+	var order models.ClientOrder
+	result := database.DB.Where("client_id = ?", clientID).First(&order)
+	if result.Error != nil {
+		order = models.ClientOrder{
+			ClientID:  clientID,
+			IsPrimary: true,
+		}
+		database.DB.Create(&order)
+	} else {
+		order.IsPrimary = true
+		database.DB.Save(&order)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"client_id": clientID,
+		"ip":        ip,
+		"location":  location,
+	})
+}
+
+// isPrivateIP 检查是否是内网 IP
+func isPrivateIP(ip string) bool {
+	// 10.0.0.0/8
+	if strings.HasPrefix(ip, "10.") {
+		return true
+	}
+	// 172.16.0.0/12
+	if strings.HasPrefix(ip, "172.1") || strings.HasPrefix(ip, "172.2") || strings.HasPrefix(ip, "172.3") {
+		// 更精确检查 172.16-31.x.x
+		parts := strings.Split(ip, ".")
+		if len(parts) >= 2 {
+			second, _ := strconv.Atoi(parts[1])
+			if second >= 16 && second <= 31 {
+				return true
+			}
+		}
+	}
+	// 192.168.0.0/16
+	if strings.HasPrefix(ip, "192.168.") {
+		return true
+	}
+	// 127.0.0.0/8 (localhost)
+	if strings.HasPrefix(ip, "127.") {
+		return true
+	}
+	return false
+}
+
+// getPublicIP 通过外部服务获取公网 IP
+func getPublicIP() (string, error) {
+	// 使用 ipify.org 获取公网 IP
+	resp, err := http.Get("https://api.ipify.org?format=text")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(body)), nil
 }

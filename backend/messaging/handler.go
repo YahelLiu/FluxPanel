@@ -10,6 +10,7 @@ import (
 
 	"client-monitor/agent"
 	"client-monitor/ilink"
+	"client-monitor/skill"
 
 	"github.com/google/uuid"
 )
@@ -28,6 +29,7 @@ type Handler struct {
 	factory       AgentFactory
 	saveDefault   SaveDefaultFunc
 	router        *agent.AgentRouter // AI 后端路由器
+	skillManager  *skill.Manager     // Skill 管理器
 	contextTokens sync.Map           // map[userID]contextToken
 	seenMsgs      sync.Map           // map[int64]time.Time — dedup by message_id
 }
@@ -44,6 +46,11 @@ func NewHandler(factory AgentFactory, saveDefault SaveDefaultFunc) *Handler {
 // SetRouter 设置 AI 后端路由器
 func (h *Handler) SetRouter(router *agent.AgentRouter) {
 	h.router = router
+}
+
+// SetSkillManager 设置 Skill 管理器
+func (h *Handler) SetSkillManager(manager *skill.Manager) {
+	h.skillManager = manager
 }
 
 // SetDefaultAgent sets the default agent (already started).
@@ -162,16 +169,85 @@ func (h *Handler) handleCommand(ctx context.Context, client *ilink.Client, msg i
 		}
 		return sb.String(), true
 
+	case text == "/skills":
+		return h.handleListSkills(msg.FromUserID)
+
+	case strings.HasPrefix(text, "/skill "):
+		return h.handleSkillCommand(msg.FromUserID, strings.TrimPrefix(text, "/skill "))
+
 	case text == "/help":
 		return `可用指令:
 /claude - 切换到 Claude 模式
 /api - 切换到 API 模式
 /mode - 查看当前模式
 /models - 查看所有可用模式
+/skills - 查看可用技能
+/skill enable <id> - 启用技能
+/skill disable <id> - 禁用技能
 /help - 显示帮助`, true
 	}
 
 	return "", false
+}
+
+// handleListSkills 列出可用技能
+func (h *Handler) handleListSkills(userID string) (string, bool) {
+	if h.skillManager == nil {
+		return "技能系统未启用", true
+	}
+
+	skills, err := h.skillManager.List()
+	if err != nil {
+		return fmt.Sprintf("获取技能列表失败: %v", err), true
+	}
+
+	if len(skills) == 0 {
+		return "暂无可用技能", true
+	}
+
+	var sb strings.Builder
+	sb.WriteString("可用技能:\n\n")
+	for _, s := range skills {
+		status := "✓"
+		if !s.Enabled {
+			status = "✗"
+		}
+		sb.WriteString(fmt.Sprintf("%s %s\n  %s\n\n", status, s.Name, s.Description))
+	}
+	sb.WriteString("使用 /skill enable/disable <id> 启用或禁用技能")
+	return sb.String(), true
+}
+
+// handleSkillCommand 处理 skill 子命令
+func (h *Handler) handleSkillCommand(userID, cmd string) (string, bool) {
+	if h.skillManager == nil {
+		return "技能系统未启用", true
+	}
+
+	parts := strings.Fields(cmd)
+	if len(parts) < 2 {
+		return "用法: /skill <enable|disable> <skill_id>", true
+	}
+
+	action := parts[0]
+	skillID := parts[1]
+
+	switch action {
+	case "enable":
+		if err := h.skillManager.SetUserEnabled(userID, skillID, true); err != nil {
+			return fmt.Sprintf("启用失败: %v", err), true
+		}
+		return fmt.Sprintf("已启用技能: %s ✓", skillID), true
+
+	case "disable":
+		if err := h.skillManager.SetUserEnabled(userID, skillID, false); err != nil {
+			return fmt.Sprintf("禁用失败: %v", err), true
+		}
+		return fmt.Sprintf("已禁用技能: %s ✗", skillID), true
+
+	default:
+		return "未知命令，可用: enable, disable", true
+	}
 }
 
 // sendToAgent sends the message to the appropriate agent and replies.

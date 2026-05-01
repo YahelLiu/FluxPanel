@@ -7,6 +7,7 @@ import (
 	"client-monitor/handlers"
 	"client-monitor/models"
 	"client-monitor/notify"
+	"client-monitor/services"
 	"client-monitor/wecom"
 	"log"
 	"os"
@@ -49,10 +50,6 @@ func main() {
 	notify.GetAlertService()
 	log.Println("Notification service initialized")
 
-	// Initialize weather service
-	notify.GetWeatherService().Start()
-	log.Println("Weather service initialized")
-
 	// Initialize reminder service
 	notify.GetReminderService().Start()
 	log.Println("Reminder service initialized")
@@ -62,6 +59,50 @@ func main() {
 		handlers.SendReminderViaWebSocket(reminder)
 	})
 	log.Println("Reminder WebSocket callback registered")
+
+	// 初始化 WeCom 消息处理器并注入所有服务
+	reminderHdl := services.NewReminderHandler()
+	memoryHdl := services.NewMemoryHandler()
+	llmSvc := services.GetLLMService()
+
+	wecom.InitMessageHandlerWithServices(&wecom.ServiceFuncs{
+		Weather: &wecom.WeatherFuncs{
+			GetConfig: func() (string, string, bool) {
+				cfg := notify.GetWeatherService().GetWeatherConfig()
+				if cfg == nil {
+					return "", "", false
+				}
+				return cfg.ApiKey, cfg.ApiHost, true
+			},
+			TestWeather: func(apiKey, apiHost, location string) (string, string, string, string, string, error) {
+				return notify.GetWeatherService().TestWeatherConfig(apiKey, apiHost, location)
+			},
+			GetWeatherDays: func(apiKey, apiHost, location string) ([]map[string]string, error) {
+				return notify.GetWeatherService().GetWeatherDays(apiKey, apiHost, location)
+			},
+			BuildMessage: func(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
+				return formatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate)
+			},
+			SendWeather: func(location, content string) error {
+				return notify.GetNotifyService().SendWeather(location, content)
+			},
+		},
+		// Reminder 服务
+		ReminderCreate: reminderHdl.Create,
+		ReminderList:   reminderHdl.List,
+		ReminderCancel: reminderHdl.Cancel,
+		// Memory 服务
+		MemorySave:   memoryHdl.Create,
+		MemoryList:   memoryHdl.List,
+		MemoryDelete: memoryHdl.Delete,
+		// LLM 服务
+		LLMChat: func(prompt string) (string, error) {
+			return llmSvc.Chat([]services.ChatMessage{
+				{Role: "user", Content: prompt},
+			})
+		},
+	})
+	log.Println("WeCom message handler initialized with all services")
 
 	// Start WeCom iLink monitor if wechat_ilink channel exists and is logged in
 	if wecom.HasWechatILinkChannel() {
@@ -100,6 +141,9 @@ func main() {
 	// Setup Gin router
 	r := gin.Default()
 
+	// 信任代理头，获取真实 IP
+	r.SetTrustedProxies([]string{"172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16", "127.0.0.1"})
+
 	// CORS middleware
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
@@ -122,6 +166,10 @@ func main() {
 		api.PUT("/clients/order", handlers.UpdateClientOrder)
 		api.PUT("/clients/orders", handlers.UpdateAllClientOrders)
 		api.PUT("/clients/:client_id/weather", handlers.UpdateClientWeather)
+		api.PUT("/clients/:client_id/primary", handlers.SetPrimaryClient)
+		api.PUT("/clients/:client_id/channels", handlers.UpdateClientChannels)
+			api.PUT("/clients/:client_id/hidden", handlers.SetClientHidden)
+			api.POST("/clients/:client_id/heartbeat", handlers.ClientHeartbeat)
 
 		// Notification routes
 		notifications := api.Group("/notifications")
@@ -178,6 +226,7 @@ func main() {
 			weather.PUT("/schedules", handlers.UpdateWeatherSchedules)
 			weather.GET("/records", handlers.GetWeatherRecords)
 			weather.POST("/send", handlers.SendWeatherNow)
+				weather.GET("/ping", handlers.PingWeather)
 		}
 
 		// WeCom routes
@@ -221,6 +270,21 @@ func main() {
 			assistant.DELETE("/memories/:id", handlers.DeleteMemory)
 			assistant.GET("/reminders", handlers.GetReminders)
 		}
+
+		// Skill routes
+		skills := api.Group("/skills")
+		{
+			skills.GET("", handlers.ListSkills)
+			skills.GET("/tools", handlers.ListAvailableTools)
+			skills.POST("/upload", handlers.UploadSkill)
+			skills.POST("/install", handlers.InstallSkillFromURL)
+			skills.GET("/:id", handlers.GetSkill)
+			skills.PUT("/:id/enable", handlers.EnableSkill)
+			skills.PUT("/:id/tools", handlers.SetSkillTools)
+			skills.DELETE("/:id", handlers.DeleteSkill)
+			skills.GET("/user/:userId", handlers.GetUserSkillSettings)
+			skills.PUT("/user/:userId/:skillId", handlers.SetUserSkillEnabled)
+		}
 	}
 
 	// WebSocket route
@@ -247,4 +311,9 @@ func startWeComMonitor(ctx context.Context) {
 	}
 
 	monitor.RunWithRestart(ctx)
+}
+
+// formatWeatherMessage 格式化天气消息
+func formatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
+	return "🌤️ 今日天气预报\n\n📍 " + location + " - " + fxDate + "\n\n🌡️ 温度: " + tempMin + "°C ~ " + tempMax + "°C\n☀️ 白天: " + textDay + "\n🌙 夜间: " + textNight
 }
