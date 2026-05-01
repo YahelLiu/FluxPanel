@@ -25,7 +25,27 @@
       "Bash(powershell -Command \"[System.IO.File]::ReadAllText\\('d:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\handlers\\\\notification.go', [System.Text.Encoding]::UTF8\\)\")",
       "Bash(cd \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\backend\")",
       "Bash(cd \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\")",
-      "Bash(go test *)"
+      "Bash(go test *)",
+      "Bash(echo 'package main *)",
+      "Bash(go run *)",
+      "Bash(docker compose *)",
+      "Bash(Get-Content \"d:\\\\code\\\\apps\\\\FluxPanel\\\\backend\\\\logs\\\\app.log\" -Tail 100)",
+      "Bash(docker restart *)",
+      "Bash(cat -A \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\backend\\\\\\\\main.go\")",
+      "Bash(xxd)",
+      "Bash(sed -i '163s/^\\\\t\\\\t\\\\t/\\\\t\\\\t/' main.go)",
+      "Bash(sed -i '164s/^\\\\t\\\\t\\\\t/\\\\t\\\\t/' main.go)",
+      "Bash(cd \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\frontend\")",
+      "Bash(sed -i '225s/channel_id: 0 }/channel_id: 0, channel_ids: [], is_primary: false }/' src/components/Dashboard.tsx)",
+      "Bash(tail -20 \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\backend\\\\\\\\handlers\\\\\\\\stats.go\")",
+      "Bash(grep -n \"Setup Gin\" \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\backend\\\\\\\\main.go\")",
+      "Bash(cat \"d:\\\\\\\\code\\\\\\\\apps\\\\\\\\FluxPanel\\\\\\\\frontend\\\\\\\\nginx.conf\")",
+      "Bash(curl -s \"http://ip-api.com/json/153.34.203.252?lang=zh-CN\")",
+      "Bash(curl -s \"https://qifu.baidu.com/api/v1/ip-portrait/brief-info?ip=153.34.203.252\" -H \"Referer: https://qifu.baidu.com/\" -H \"User-Agent: Mozilla/5.0\")",
+      "Bash(bun run *)",
+      "Bash(cmd /c \"npm run build\")",
+      "Bash(powershell -Command \"npm run build\")",
+      "Bash(where npm *)"
     ]
   }
 }
