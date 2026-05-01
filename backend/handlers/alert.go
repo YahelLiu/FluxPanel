@@ -4,10 +4,10 @@ import (
 	"client-monitor/database"
 	"client-monitor/models"
 	"client-monitor/notify"
+	"client-monitor/notify/types"
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -251,19 +251,25 @@ func TestAlertThreshold(c *gin.Context) {
 		metricName, threshold.Threshold+5, threshold.Threshold,
 	)
 
-	// 创建测试事件
-	testEvent := models.Event{
-		ClientID:  "test-client",
-		EventType: "alert_test",
-		Status:    "error",
-		CreatedAt: time.Now(),
-	}
+	// 发送通知到用户选择的渠道
+	msg := types.NewNotifyMessage(types.MessageTypeAlert, title, content).
+		WithPriority(types.PriorityHigh)
 
-	// 发送通知
 	success := false
 	var lastErr error
 	for _, channel := range channels {
-		if err := notify.GetService().SendAlertNotification(&channel, title, content, testEvent); err != nil {
+		// 根据渠道类型发送
+		var driverName string
+		switch channel.Type {
+		case models.NotificationTypeWechatILink:
+			driverName = "ilink"
+		case models.NotificationTypeFeishu:
+			driverName = "feishu"
+		default:
+			continue
+		}
+
+		if err := notify.GetNotifyService().SendTo(driverName, msg); err != nil {
 			lastErr = err
 		} else {
 			success = true
@@ -272,8 +278,10 @@ func TestAlertThreshold(c *gin.Context) {
 
 	if success {
 		c.JSON(http.StatusOK, gin.H{"success": true})
-	} else {
+	} else if lastErr != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": lastErr.Error()})
+	} else {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "没有可发送的渠道"})
 	}
 }
 

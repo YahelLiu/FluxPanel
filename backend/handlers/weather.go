@@ -5,6 +5,7 @@ import (
 	"client-monitor/models"
 	"client-monitor/notify"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -226,19 +227,36 @@ func SendWeatherNow(c *gin.Context) {
 	}
 
 	// 构建消息
-	message := formatWeatherMessage(city, tempMax, tempMin, textDay, textNight, fxDate)
+	message := FormatWeatherMessage(city, tempMax, tempMin, textDay, textNight, fxDate)
 
-	// 发送通知
-	if err := notify.GetNotifyService().SendWeather(city, message); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
+	// 获取客户端配置的通知渠道
+	var order models.ClientOrder
+	if err := database.DB.Where("client_id = ?", req.ClientID).First(&order).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "客户端配置不存在"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "天气通知已发送"})
+	if len(order.ChannelIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "未配置通知渠道"})
+		return
+	}
+
+	// 发送通知到配置的渠道
+	errs := notify.GetNotifyService().SendWeatherToChannels(city, message, order.ChannelIDs)
+	if len(errs) > 0 {
+		var errStrs []string
+		for _, e := range errs {
+			errStrs = append(errStrs, e.Error())
+		}
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": strings.Join(errStrs, ", ")})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("天气通知已发送到 %d 个渠道", len(order.ChannelIDs))})
 }
 
-// formatWeatherMessage 格式化天气消息
-func formatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
+// FormatWeatherMessage 格式化天气消息（导出供其他包使用）
+func FormatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
 	return "🌤️ 今日天气预报\n\n📍 " + location + " - " + fxDate + "\n\n🌡️ 温度: " + tempMin + "°C ~ " + tempMax + "°C\n☀️ 白天: " + textDay + "\n🌙 夜间: " + textNight
 }
 

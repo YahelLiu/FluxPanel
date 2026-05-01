@@ -158,9 +158,6 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	// 清除缓存
-	notify.GetService().ClearCache()
-
 	c.JSON(http.StatusOK, channel)
 }
 
@@ -182,9 +179,6 @@ func DeleteChannel(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "channel not found"})
 		return
 	}
-
-	// 清除缓存
-	notify.GetService().ClearCache()
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
@@ -451,9 +445,6 @@ func GetWechatILinkStatus(c *gin.Context) {
 		database.DB.Save(&channel)
 	}
 
-	// 清除通知器缓存
-	notify.GetService().ClearCache()
-
 	// 重置 wecom 客户端，让它重新从数据库加载凭证
 	wecom.ResetClient()
 
@@ -497,9 +488,6 @@ func LogoutWechatILink(c *gin.Context) {
 	channel.WechatILink.LoggedIn = false
 	channel.WechatILink.BotToken = ""
 	database.DB.Save(&channel)
-
-	// 清除缓存
-	notify.GetService().ClearCache()
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }

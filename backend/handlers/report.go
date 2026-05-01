@@ -52,11 +52,6 @@ func Report(c *gin.Context) {
 		"event": event,
 	}))
 
-	// Send notification for error/warning events
-	if event.Status == "error" || event.Status == "warning" {
-		go notify.GetService().SendNotification(nil, event)
-	}
-
 	// Check alert thresholds
 	go notify.GetAlertService().CheckEvent(event)
 

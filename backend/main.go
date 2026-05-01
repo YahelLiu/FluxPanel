@@ -46,7 +46,7 @@ func main() {
 	handlers.InitWebSocket()
 
 	// Initialize notification service
-	notify.GetService()
+	notify.GetNotifyService()
 	notify.GetAlertService()
 	log.Println("Notification service initialized")
 
@@ -80,11 +80,12 @@ func main() {
 			GetWeatherDays: func(apiKey, apiHost, location string) ([]map[string]string, error) {
 				return notify.GetWeatherService().GetWeatherDays(apiKey, apiHost, location)
 			},
-			BuildMessage: func(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
-				return formatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate)
-			},
+			BuildMessage: handlers.FormatWeatherMessage,
 			SendWeather: func(location, content string) error {
 				return notify.GetNotifyService().SendWeather(location, content)
+			},
+			SendWeatherToChannels: func(location, content string, channelIDs []int) []error {
+				return notify.GetNotifyService().SendWeatherToChannels(location, content, channelIDs)
 			},
 		},
 		// Reminder 服务
@@ -313,7 +314,5 @@ func startWeComMonitor(ctx context.Context) {
 	monitor.RunWithRestart(ctx)
 }
 
-// formatWeatherMessage 格式化天气消息
-func formatWeatherMessage(location, tempMax, tempMin, textDay, textNight, fxDate string) string {
-	return "🌤️ 今日天气预报\n\n📍 " + location + " - " + fxDate + "\n\n🌡️ 温度: " + tempMin + "°C ~ " + tempMax + "°C\n☀️ 白天: " + textDay + "\n🌙 夜间: " + textNight
-}
+// formatWeatherMessage 格式化天气消息 - 已移至 handlers/weather.go
+// 保留此注释用于说明，实际函数为 handlers.FormatWeatherMessage
