@@ -92,10 +92,16 @@ func main() {
 		ReminderCreate: reminderHdl.Create,
 		ReminderList:   reminderHdl.List,
 		ReminderCancel: reminderHdl.Cancel,
-		// Memory 服务
-		MemorySave:   memoryHdl.Create,
+		// Memory 服务（兼容旧接口）
+		MemorySave:   memoryHdl.CreateLegacy,
 		MemoryList:   memoryHdl.List,
-		MemoryDelete: memoryHdl.Delete,
+		MemoryDelete: memoryHdl.DeleteByKeyword,
+		// Memory V2 服务
+		MemoryCreate:     memoryHdl.Create,
+		MemorySearch:     memoryHdl.Search,
+		MemoryUpdate:     memoryHdl.Update,
+		MemoryDeleteByID: memoryHdl.Delete,
+		MemoryListByCat:  memoryHdl.ListByCategory,
 		// LLM 服务
 		LLMChat: func(prompt string) (string, error) {
 			return llmSvc.Chat([]services.ChatMessage{
