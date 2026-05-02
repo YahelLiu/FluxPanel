@@ -28,6 +28,9 @@ type Skill struct {
 	AllowedTools []string `json:"allowed_tools"` // 系统控制的白名单
 	Permissions  []string `json:"permissions"`   // 授予的权限
 
+	// Builtin 基础技能标记（不受启禁用限制）
+	Builtin bool `json:"builtin"`
+
 	// 状态
 	Enabled     bool   `json:"enabled"`
 	ContentHash string `json:"content_hash"`
@@ -63,12 +66,14 @@ type SkillMetadata struct {
 
 // SkillConfig 从 SKILL.md YAML frontmatter 解析
 type SkillConfig struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	Version     string   `yaml:"version,omitempty"`
-	Author      string   `yaml:"author,omitempty"`
-	Type        string   `yaml:"type,omitempty"`
-	Triggers    []string `yaml:"triggers,omitempty"`
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	Version      string   `yaml:"version,omitempty"`
+	Author       string   `yaml:"author,omitempty"`
+	Type         string   `yaml:"type,omitempty"`
+	Builtin      bool     `yaml:"builtin,omitempty"`
+	Triggers     []string `yaml:"triggers,omitempty"`
+	AllowedTools []string `yaml:"allowed_tools,omitempty"`
 }
 
 // UserSkillSetting 用户级 skill 配置

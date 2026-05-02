@@ -34,11 +34,21 @@ type (
 	// ReminderCancelFunc 取消提醒
 	ReminderCancelFunc func(userID uint, keyword string) (string, error)
 
-	// MemorySaveFunc 保存记忆
+	// MemoryCreateFunc 创建记忆
+	MemoryCreateFunc func(userID uint, content, category string, importance int, source string) (*models.Memory, error)
+	// MemorySearchFunc 搜索记忆
+	MemorySearchFunc func(userID uint, query string, limit int) ([]models.Memory, error)
+	// MemoryUpdateFunc 更新记忆
+	MemoryUpdateFunc func(userID uint, memoryID uint, content string) (*models.Memory, error)
+	// MemoryDeleteByIDFunc 按 ID 删除记忆
+	MemoryDeleteByIDFunc func(userID uint, memoryID uint) error
+	// MemoryListByCategoryFunc 按分类查看记忆
+	MemoryListByCategoryFunc func(userID uint, category string) ([]models.Memory, error)
+	// MemorySaveFunc 保存记忆（兼容旧接口）
 	MemorySaveFunc func(userID uint, content string) (string, error)
-	// MemoryListFunc 查看记忆列表
+	// MemoryListFunc 查看记忆列表（兼容旧接口）
 	MemoryListFunc func(userID uint) (string, error)
-	// MemoryDeleteFunc 删除记忆
+	// MemoryDeleteFunc 删除记忆（兼容旧接口）
 	MemoryDeleteFunc func(userID uint, keyword string) (string, error)
 
 	// LLMChatFunc LLM 聊天
@@ -62,9 +72,14 @@ type ToolRegistry struct {
 	reminderList    ReminderListFunc
 	reminderCancel  ReminderCancelFunc
 
-	memorySave   MemorySaveFunc
-	memoryList    MemoryListFunc
-	memoryDelete  MemoryDeleteFunc
+	memoryCreate      MemoryCreateFunc
+	memorySearch      MemorySearchFunc
+	memoryUpdate      MemoryUpdateFunc
+	memoryDeleteByID  MemoryDeleteByIDFunc
+	memoryListByCat   MemoryListByCategoryFunc
+	memorySave        MemorySaveFunc
+	memoryList        MemoryListFunc
+	memoryDelete      MemoryDeleteFunc
 
 	llmChat LLMChatFunc
 }
@@ -117,7 +132,23 @@ func (r *ToolRegistry) SetMemoryFunctions(
 	r.memorySave = save
 	r.memoryList = list
 	r.memoryDelete = delete
-	log.Printf("[tool] 记忆服务函数已注入")
+	log.Printf("[tool] 记忆服务函数已注入（兼容模式）")
+}
+
+// SetMemoryFunctionsV2 设置记忆相关函数 V2（依赖注入）
+func (r *ToolRegistry) SetMemoryFunctionsV2(
+	create MemoryCreateFunc,
+	search MemorySearchFunc,
+	update MemoryUpdateFunc,
+	deleteByID MemoryDeleteByIDFunc,
+	listByCat MemoryListByCategoryFunc,
+) {
+	r.memoryCreate = create
+	r.memorySearch = search
+	r.memoryUpdate = update
+	r.memoryDeleteByID = deleteByID
+	r.memoryListByCat = listByCat
+	log.Printf("[tool] 记忆服务函数 V2 已注入")
 }
 
 // SetLLMChat 设置 LLM 聊天函数（依赖注入）
@@ -168,6 +199,7 @@ func (r *ToolRegistry) registerBuiltinTools() {
 	})
 
 	// ========== 记忆工具 ==========
+	// 旧版工具（兼容）
 	r.Register(&Tool{
 		Name:        "memory_save",
 		Description: "保存用户记忆，记住用户告诉你的信息",
@@ -199,6 +231,71 @@ func (r *ToolRegistry) registerBuiltinTools() {
 			},
 		},
 		Handler: r.handleMemoryDelete,
+	})
+
+	// 新版工具
+	r.Register(&Tool{
+		Name:        "memory_create",
+		Description: "创建一条长期记忆，保存用户偏好、身份、项目背景等信息",
+		Parameters: map[string]Parameter{
+			"content": {
+				Type:        "string",
+				Description: "需要保存的记忆内容，必须是稳定、可复用的信息",
+				Required:    true,
+			},
+			"category": {
+				Type:        "string",
+				Description: "记忆分类: preference(偏好), identity(身份), project(项目), relationship(关系), instruction(指令), fact(事实)",
+				Required:    false,
+			},
+			"importance": {
+				Type:        "integer",
+				Description: "重要度 1-10，默认5",
+				Required:    false,
+			},
+			"source": {
+				Type:        "string",
+				Description: "来源: explicit(明确要求), inferred(推断), system(系统)",
+				Required:    false,
+			},
+		},
+		Handler: r.handleMemoryCreate,
+	})
+
+	r.Register(&Tool{
+		Name:        "memory_search",
+		Description: "根据关键词检索相关长期记忆",
+		Parameters: map[string]Parameter{
+			"query": {
+				Type:        "string",
+				Description: "搜索关键词，空字符串返回所有记忆",
+				Required:    true,
+			},
+			"limit": {
+				Type:        "integer",
+				Description: "返回数量限制，默认5",
+				Required:    false,
+			},
+		},
+		Handler: r.handleMemorySearch,
+	})
+
+	r.Register(&Tool{
+		Name:        "memory_update",
+		Description: "更新已有记忆，用于修改或补充之前记住的信息",
+		Parameters: map[string]Parameter{
+			"memory_id": {
+				Type:        "integer",
+				Description: "要更新的记忆ID",
+				Required:    true,
+			},
+			"content": {
+				Type:        "string",
+				Description: "新的记忆内容",
+				Required:    true,
+			},
+		},
+		Handler: r.handleMemoryUpdate,
 	})
 
 	// ========== 天气工具 ==========
@@ -479,6 +576,117 @@ func (r *ToolRegistry) handleMemoryDelete(userID string, params map[string]inter
 	return map[string]interface{}{
 		"success": true,
 		"message": result,
+	}, nil
+}
+
+// ========== 新版记忆工具处理器 ==========
+
+func (r *ToolRegistry) handleMemoryCreate(userID string, params map[string]interface{}) (interface{}, error) {
+	if r.memoryCreate == nil {
+		return nil, fmt.Errorf("记忆服务未配置")
+	}
+
+	dbUserID, err := r.parseUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	content, _ := params["content"].(string)
+	category, _ := params["category"].(string)
+	importance, _ := params["importance"].(int)
+	source, _ := params["source"].(string)
+
+	// 如果没有指定 importance，尝试从参数中获取 float64（JSON 数字）
+	if importance == 0 {
+		if imp, ok := params["importance"].(float64); ok {
+			importance = int(imp)
+		}
+	}
+
+	memory, err := r.memoryCreate(dbUserID, content, category, importance, source)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"ok":        true,
+		"memory_id": memory.ID,
+		"content":   memory.Content,
+		"category":  memory.Category,
+		"message":   "记忆已保存",
+	}, nil
+}
+
+func (r *ToolRegistry) handleMemorySearch(userID string, params map[string]interface{}) (interface{}, error) {
+	if r.memorySearch == nil {
+		return nil, fmt.Errorf("记忆服务未配置")
+	}
+
+	dbUserID, err := r.parseUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	query, _ := params["query"].(string)
+	limit := 5
+	if l, ok := params["limit"].(float64); ok {
+		limit = int(l)
+	} else if l, ok := params["limit"].(int); ok {
+		limit = l
+	}
+
+	memories, err := r.memorySearch(dbUserID, query, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换为返回格式
+	var results []map[string]interface{}
+	for _, m := range memories {
+		results = append(results, map[string]interface{}{
+			"id":         m.ID,
+			"content":    m.Content,
+			"category":   m.Category,
+			"importance": m.Importance,
+			"created_at": m.CreatedAt.Format("2006-01-02"),
+		})
+	}
+
+	return map[string]interface{}{
+		"memories": results,
+		"count":    len(results),
+	}, nil
+}
+
+func (r *ToolRegistry) handleMemoryUpdate(userID string, params map[string]interface{}) (interface{}, error) {
+	if r.memoryUpdate == nil {
+		return nil, fmt.Errorf("记忆服务未配置")
+	}
+
+	dbUserID, err := r.parseUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	var memoryID uint
+	if id, ok := params["memory_id"].(float64); ok {
+		memoryID = uint(id)
+	} else if id, ok := params["memory_id"].(int); ok {
+		memoryID = uint(id)
+	}
+
+	content, _ := params["content"].(string)
+
+	memory, err := r.memoryUpdate(dbUserID, memoryID, content)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"ok":         true,
+		"memory_id":  memory.ID,
+		"new_content": memory.Content,
+		"message":    "记忆已更新",
 	}, nil
 }
 

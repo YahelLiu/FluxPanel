@@ -22,12 +22,18 @@ type Conversation struct {
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 }
 
-// Memory 记忆
+// Memory 长期记忆
 type Memory struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `gorm:"index" json:"user_id"`
-	Content   string    `gorm:"type:text" json:"content"` // 记忆内容
-	CreatedAt time.Time `json:"created_at"`
+	ID          uint       `gorm:"primaryKey" json:"id"`
+	UserID      uint       `gorm:"index" json:"user_id"`
+	Content     string     `gorm:"type:text" json:"content"`                                      // 记忆内容
+	Category    string     `gorm:"size:20;default:'fact';index" json:"category"`                 // preference/identity/project/relationship/instruction/fact
+	Importance  int        `gorm:"default:5" json:"importance"`                                   // 重要度 1-10
+	Source      string     `gorm:"size:20;default:'explicit'" json:"source"`                      // explicit/inferred/imported/system
+	Status      string     `gorm:"size:20;default:'active';index" json:"status"`                  // active/archived/deleted
+	LastUsedAt  *time.Time `json:"last_used_at"`                                                  // 最后使用时间
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // Todo 待办事项

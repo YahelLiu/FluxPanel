@@ -76,8 +76,9 @@ func (p *Parser) ParseContent(content []byte, path string) (*Skill, error) {
 		Triggers:     config.Triggers,
 		ContentHash:  contentHash,
 		Enabled:      true,
+		Builtin:      config.Builtin,
 		Trusted:      false,
-		AllowedTools: []string{},
+		AllowedTools: config.AllowedTools,
 		content: &SkillContent{
 			SystemPrompt: strings.TrimSpace(body),
 			References:   make(map[string]string),
@@ -97,6 +98,9 @@ func (p *Parser) ParseContent(content []byte, path string) (*Skill, error) {
 // ---
 // # Skill content
 func (p *Parser) parseFrontmatter(content []byte) (*SkillConfig, string, error) {
+	// 统一换行符为 LF
+	content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+
 	// 检查是否以 --- 开头
 	if !bytes.HasPrefix(content, []byte("---\n")) {
 		return nil, "", fmt.Errorf("SKILL.md 必须以 YAML frontmatter 开头 (---)")

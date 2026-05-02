@@ -21,6 +21,7 @@ func NewRouter(manager *Manager) *Router {
 
 // FindEligible 返回用户消息可用的 skills
 // 过滤: enabled + user_enabled + trusted
+// 注意: Builtin skills 始终可用，不受启禁用限制
 func (r *Router) FindEligible(userID, message string) ([]*Skill, error) {
 	allSkills, err := r.manager.List()
 	if err != nil {
@@ -36,6 +37,12 @@ func (r *Router) FindEligible(userID, message string) ([]*Skill, error) {
 
 	var eligible []*Skill
 	for _, skill := range allSkills {
+		// Builtin skills 始终可用
+		if skill.Builtin {
+			eligible = append(eligible, skill)
+			continue
+		}
+
 		// 检查全局启用
 		if !skill.Enabled {
 			continue

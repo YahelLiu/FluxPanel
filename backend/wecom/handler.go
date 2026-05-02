@@ -9,6 +9,7 @@ import (
 	"client-monitor/agent"
 	"client-monitor/ilink"
 	"client-monitor/messaging"
+	"client-monitor/models"
 	"client-monitor/skill"
 )
 
@@ -38,10 +39,17 @@ type ServiceFuncs struct {
 	ReminderList   func(userID uint) (string, error)
 	ReminderCancel func(userID uint, keyword string) (string, error)
 
-	// Memory 服务
+	// Memory 服务（兼容旧接口）
 	MemorySave   func(userID uint, content string) (string, error)
 	MemoryList   func(userID uint) (string, error)
 	MemoryDelete func(userID uint, keyword string) (string, error)
+
+	// Memory V2 服务
+	MemoryCreate      func(userID uint, content, category string, importance int, source string) (*models.Memory, error)
+	MemorySearch      func(userID uint, query string, limit int) ([]models.Memory, error)
+	MemoryUpdate      func(userID uint, memoryID uint, content string) (*models.Memory, error)
+	MemoryDeleteByID  func(userID uint, memoryID uint) error
+	MemoryListByCat   func(userID uint, category string) ([]models.Memory, error)
 
 	// LLM 服务
 	LLMChat func(prompt string) (string, error)
@@ -135,6 +143,17 @@ func NewMessageHandlerWithServices(serviceFuncs *ServiceFuncs) *MessageHandler {
 			serviceFuncs.MemorySave,
 			serviceFuncs.MemoryList,
 			serviceFuncs.MemoryDelete,
+		)
+	}
+
+	// 注入 Memory V2 服务
+	if serviceFuncs != nil && serviceFuncs.MemoryCreate != nil {
+		toolRegistry.SetMemoryFunctionsV2(
+			serviceFuncs.MemoryCreate,
+			serviceFuncs.MemorySearch,
+			serviceFuncs.MemoryUpdate,
+			serviceFuncs.MemoryDeleteByID,
+			serviceFuncs.MemoryListByCat,
 		)
 	}
 

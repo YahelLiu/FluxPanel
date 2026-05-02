@@ -9,6 +9,7 @@ import (
 	"client-monitor/database"
 	"client-monitor/models"
 	"client-monitor/services"
+	"client-monitor/skill"
 	"client-monitor/wecom"
 
 	"github.com/gin-gonic/gin"
@@ -75,7 +76,27 @@ func HandleWeComChat(c *gin.Context) {
 
 	// 非流式处理
 	agent := services.GetAgentService()
-	response, err := agent.ProcessMessage(user.ID, req.Message)
+
+	// 使用 skill router 获取 active skills
+	var activeSkills []*skill.Skill
+	skillManager := skill.GetManager()
+	if skillManager != nil {
+		router := skill.NewRouter(skillManager)
+		var routeErr error
+		activeSkills, routeErr = router.Route(req.UserID, req.Message)
+		if routeErr != nil {
+			log.Printf("[wecom] skill routing error: %v", routeErr)
+		}
+		if len(activeSkills) > 0 {
+			skillNames := make([]string, len(activeSkills))
+			for i, s := range activeSkills {
+				skillNames[i] = s.Name
+			}
+			log.Printf("[wecom] activated skills: %v", skillNames)
+		}
+	}
+
+	response, err := agent.ProcessMessageWithSkills(user.ID, req.Message, activeSkills)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
 		return

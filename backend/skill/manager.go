@@ -127,9 +127,12 @@ func (m *Manager) Import(path string) (*Skill, error) {
 	m.parser.LoadReferences(skill)
 	m.parser.LoadTemplates(skill)
 
-	// 根据名称设置默认允许的工具
+	// 使用 SKILL.md 中的 AllowedTools，如果没有则使用默认值
 	if len(skill.AllowedTools) == 0 {
 		skill.AllowedTools = m.getDefaultTools(skill)
+		log.Printf("[skill] %s 无 allowed_tools，使用默认: %v", skill.ID, skill.AllowedTools)
+	} else {
+		log.Printf("[skill] %s 从 SKILL.md 解析 allowed_tools: %v", skill.ID, skill.AllowedTools)
 	}
 
 	// 保存到数据库
@@ -143,12 +146,27 @@ func (m *Manager) Import(path string) (*Skill, error) {
 		if err := database.DB.Create(dbSkill).Error; err != nil {
 			return nil, err
 		}
+		log.Printf("[skill] 新建 skill: %s", skill.ID)
 	} else {
-		// 更新
+		// 更新 - 强制更新 allowed_tools
 		dbSkill.ID = existing.ID
-		if err := database.DB.Save(dbSkill).Error; err != nil {
+		if err := database.DB.Model(&models.Skill{}).
+			Where("skill_id = ?", skill.ID).
+			Updates(map[string]interface{}{
+				"name":          dbSkill.Name,
+				"description":   dbSkill.Description,
+				"type":          dbSkill.Type,
+				"version":       dbSkill.Version,
+				"author":        dbSkill.Author,
+				"trusted":       dbSkill.Trusted,
+				"allowed_tools": dbSkill.AllowedTools,
+				"content_hash":  dbSkill.ContentHash,
+				"triggers":      dbSkill.Triggers,
+				"path":          dbSkill.Path,
+			}).Error; err != nil {
 			return nil, err
 		}
+		log.Printf("[skill] 更新 skill: %s (allowed_tools: %s)", skill.ID, dbSkill.AllowedTools)
 	}
 
 	// 更新缓存
@@ -164,7 +182,7 @@ func (m *Manager) getDefaultTools(skill *Skill) []string {
 	case "reminder":
 		return []string{"reminder_create", "reminder_list", "reminder_cancel"}
 	case "memory":
-		return []string{"memory_save", "memory_list", "memory_delete"}
+		return []string{"memory_create", "memory_search", "memory_update", "memory_delete", "memory_list"}
 	case "translator":
 		return []string{"translator"}
 	case "weather":
@@ -178,7 +196,7 @@ func (m *Manager) getDefaultTools(skill *Skill) []string {
 				return []string{"reminder_create", "reminder_list", "reminder_cancel"}
 			}
 			if containsAny(name, "memory", "记忆") {
-				return []string{"memory_save", "memory_list", "memory_delete"}
+				return []string{"memory_create", "memory_search", "memory_update", "memory_delete", "memory_list"}
 			}
 			if containsAny(name, "translat", "翻译") {
 				return []string{"translator"}
